@@ -19,7 +19,18 @@ file (job `trashapply`).
 | `scan` | walk incrementale, rileva file nuovi o modificati (mtime + size) |
 | `fullscan` | uguale ma ignora mtime: rilegge tutto |
 | `thumbs` | genera le thumbnail mancanti |
-| `trashapply` | esegue le cancellazioni approvate, spostando in `.photovault/trash/` |
+| `trashapply` | sposta in `.photovault/trash/<yyyymmdd>/` i file che l'utente ha deciso di eliminare |
+| `trashpurge` | elimina davvero i file rimasti nel cestino oltre i giorni di ritenzione |
+
+I due job del cestino stanno qui perché questo è l'unico pod con la share montata in
+scrittura. L'API si limita ad accodare il lavoro: è una garanzia strutturale che un bug
+nell'API non possa cancellare foto.
+
+`trashapply` non usa mai `os.Remove`: fa una rename, che sulla stessa share è atomica e
+istantanea e rende ogni errore recuperabile con un `mv`. Rimuove anche le due thumbnail del
+file, che altrimenti resterebbero orfane a occupare spazio.
+
+`trashpurge` è **l'unico punto di tutto photovault in cui un file viene davvero cancellato**.
 
 Il pod parte, chiama `POST /api/internal/jobs/claim` con la lista dei nomi qui sopra, esegue,
 richiama il claim finché la coda è vuota, poi esce. Dopo un `scan` completato si riaccoda da

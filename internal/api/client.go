@@ -200,3 +200,41 @@ func (c *Client) GetPending(stage string, limit int) ([]PendingMedia, error) {
 func (c *Client) SendThumbs(items []ThumbResult) error {
 	return c.do("POST", "/api/internal/thumb/batch", map[string]any{"items": items}, nil)
 }
+
+// TrashItem e' un file da spostare nel cestino (o da eliminare, se scaduto).
+// I percorsi sono relativi: il mount e' una proprieta' del pod.
+type TrashItem struct {
+	TrashID      int    `json:"trash_id"`
+	MediaID      int    `json:"media_id"`
+	OriginalPath string `json:"original_path"`
+	TrashPath    string `json:"trash_path"`
+	RelPath      string `json:"rel_path"`
+	// ,string perche' node-postgres serializza i bigint come STRINGA JSON:
+	// lo fa apposta, un bigint puo' eccedere il numero sicuro di JavaScript.
+	// Senza questo tag l'unmarshal fallisce con "cannot unmarshal string".
+	FileSize int64 `json:"file_size,string"`
+}
+
+func (c *Client) GetPendingTrash(limit int) ([]TrashItem, error) {
+	var out []TrashItem
+	err := c.do("GET", fmt.Sprintf("/api/internal/trash/pending?limit=%d", limit), nil, &out)
+	return out, err
+}
+
+func (c *Client) CompleteTrash(trashID int, status, result string) error {
+	body := map[string]any{"status": status, "result": result}
+	return c.do("POST", fmt.Sprintf("/api/internal/trash/%d/done", trashID), body, nil)
+}
+
+// GetExpiredTrash restituisce i file nel cestino da piu' giorni della
+// ritenzione configurata: la soglia la applica l'API, che conosce i parametri.
+func (c *Client) GetExpiredTrash(limit int) ([]TrashItem, error) {
+	var out []TrashItem
+	err := c.do("GET", fmt.Sprintf("/api/internal/trash/expired?limit=%d", limit), nil, &out)
+	return out, err
+}
+
+func (c *Client) CompletePurge(trashID int, status, result string) error {
+	body := map[string]any{"status": status, "result": result}
+	return c.do("POST", fmt.Sprintf("/api/internal/trash/%d/purged", trashID), body, nil)
+}

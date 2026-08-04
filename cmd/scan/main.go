@@ -13,6 +13,7 @@ import (
 	"github.com/pste/photovault-scan/internal/config"
 	"github.com/pste/photovault-scan/internal/scanner"
 	"github.com/pste/photovault-scan/internal/thumbs"
+	"github.com/pste/photovault-scan/internal/trash"
 )
 
 func main() {
@@ -22,12 +23,18 @@ func main() {
 	client := api.New(cfg.APIURL, cfg.APIToken)
 	scan := scanner.New(cfg, client, log)
 	thumbnailer := thumbs.New(cfg, client, log)
+	bin := trash.New(cfg, client, log)
 
 	// I nomi di questa mappa sono anche l'elenco che il pod dichiara al claim:
 	// e' cosi' che non si prende i job destinati al pod Python o a quello dedup.
+	//
+	// I due job del cestino stanno qui perche' questo e' l'unico pod con la
+	// share montata in scrittura.
 	handlers := map[string]func() (string, error){
-		"scan":   scan.Run,
-		"thumbs": thumbnailer.Run,
+		"scan":       scan.Run,
+		"thumbs":     thumbnailer.Run,
+		"trashapply": bin.Apply,
+		"trashpurge": bin.Purge,
 	}
 
 	names := make([]string, 0, len(handlers))
