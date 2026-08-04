@@ -23,8 +23,13 @@ import (
 // archivio con i soli dati del filesystem, e la thumbnail dira' il resto.
 func enrich(item *api.MediaItem, path string, log *slog.Logger) {
 	switch item.MediaKind {
-	case "image":
-		imageMeta(item, path, log)
+	case "image", "raw":
+		// Prima l'EXIF: e' quello che porta data di scatto, fotocamera,
+		// orientamento e GPS. Le dimensioni vengono dopo, come ripiego.
+		readExif(item, path, log)
+		if item.Width == nil {
+			imageMeta(item, path, log)
+		}
 	case "video":
 		videoMeta(item, path, log)
 	}
