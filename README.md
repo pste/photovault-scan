@@ -63,10 +63,13 @@ Prova end-to-end contro una cartella locale:
 ```bash
 docker build -f .docker/Dockerfile -t photovault-scan:dev .
 docker run --rm --network host \
-  -e API_URL=http://localhost:3000 -e API_TOKEN=dev -e MEDIA_ROOT=/data/photos \
-  -v ~/Pictures:/data/photos \
+  --env-file .env \
+  -v /percorso/delle/foto:/data/photos \
   photovault-scan:dev
 ```
+
+Le credenziali stanno nel `.env` locale (copiato da `.env.dist`, gitignorato) e non vanno
+mai scritte sulla riga di comando: finirebbero nella cronologia della shell.
 
 ## Scelte implementative
 
