@@ -3,7 +3,6 @@ package scanner
 import (
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/evanoberholster/imagemeta"
 
@@ -33,9 +32,8 @@ func readExif(item *api.MediaItem, path string, log *slog.Logger) {
 		return
 	}
 
-	if when := data.OriginalDate(); !when.IsZero() {
-		captured := when.UTC().Format(time.RFC3339)
-		item.CaptureTS = &captured
+	if captured := captureTS(data.OriginalDate()); captured != nil {
+		item.CaptureTS = captured
 	}
 
 	if make := data.IFD0.Make; make != "" {

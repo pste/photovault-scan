@@ -42,6 +42,25 @@ func enrich(item *api.MediaItem, path string, log *slog.Logger) {
 	}
 }
 
+// captureTS accetta una data solo se e' plausibile, e restituisce nil altrimenti.
+//
+// time.IsZero() NON basta: e' vero solo per l'esatto 0001-01-01. Un EXIF con la
+// data azzerata -- "0000:00:00 00:00:00", frequentissimo nelle immagini passate
+// da WhatsApp -- viene normalizzato ad anno 0, mese 0, giorno 0, cioe'
+// -0001-11-30. Quella data supera IsZero(), arriva a PostgreSQL e fa fallire
+// l'INSERT dell'intero batch con SQLSTATE 22007. Non e' un caso di scuola: e'
+// successo al primo scan di un archivio vero, dopo 9000 file.
+//
+// Il limite superiore serve contro il problema opposto: una fotocamera con
+// l'orologio sballato in avanti resterebbe in cima alla griglia per sempre.
+func captureTS(when time.Time) *string {
+	if when.Year() < 1900 || when.After(time.Now().AddDate(1, 0, 0)) {
+		return nil
+	}
+	formatted := when.UTC().Format(time.RFC3339)
+	return &formatted
+}
+
 func imageMeta(item *api.MediaItem, path string, log *slog.Logger) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -114,8 +133,9 @@ func videoMeta(item *api.MediaItem, path string, log *slog.Logger) {
 
 	if raw, ok := probe.Format.Tags["creation_time"]; ok {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
-			captured := parsed.UTC().Format(time.RFC3339)
-			item.CaptureTS = &captured
+			if captured := captureTS(parsed); captured != nil {
+				item.CaptureTS = captured
+			}
 		}
 	}
 }
