@@ -44,6 +44,21 @@ func main() {
 
 	log.Info("pod scan avviato", "handlers", names, "media_root", cfg.MediaRoot)
 
+	// Su Kubernetes la schedulazione la fa il CronJob, non questo pod: e' lui
+	// che, svegliandosi, mette in coda il lavoro da fare. Senza, il pod
+	// troverebbe la coda vuota e uscirebbe subito.
+	for _, name := range cfg.EnqueueOnStart {
+		if _, ok := handlers[name]; !ok {
+			log.Error("ENQUEUE_ON_START contiene un job che questo pod non sa eseguire", "name", name)
+			os.Exit(1)
+		}
+		if err := client.EnqueueJob(name, time.Now()); err != nil {
+			log.Error("accodamento fallito", "name", name, "err", err)
+			os.Exit(1)
+		}
+		log.Info("job accodato all'avvio", "name", name)
+	}
+
 	executed := 0
 	for {
 		job, err := client.ClaimJob(names)

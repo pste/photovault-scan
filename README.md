@@ -17,7 +17,6 @@ file (job `trashapply`).
 | Job | Cosa fa |
 |---|---|
 | `scan` | walk incrementale, rileva file nuovi o modificati (mtime + size) |
-| `fullscan` | uguale ma ignora mtime: rilegge tutto |
 | `thumbs` | genera le thumbnail mancanti |
 | `trashapply` | sposta in `.photovault/trash/<yyyymmdd>/` i file che l'utente ha deciso di eliminare |
 | `trashpurge` | elimina davvero i file rimasti nel cestino oltre i giorni di ritenzione |
@@ -32,9 +31,16 @@ file, che altrimenti resterebbero orfane a occupare spazio.
 
 `trashpurge` è **l'unico punto di tutto photovault in cui un file viene davvero cancellato**.
 
-Il pod parte, chiama `POST /api/internal/jobs/claim` con la lista dei nomi qui sopra, esegue,
-richiama il claim finché la coda è vuota, poi esce. Dopo un `scan` completato si riaccoda da
-solo leggendo `parameters.cron_scan` (`github.com/robfig/cron/v3`).
+Il pod parte, accoda i job elencati in `ENQUEUE_ON_START`, poi chiama
+`POST /api/internal/jobs/claim` con la lista dei nomi qui sopra, esegue, richiama il claim
+finché la coda è vuota e infine esce. Dopo uno `scan` riuscito accoda `thumbs` da solo, e lo
+esegue nello stesso run: le thumbnail da generare, dopo una scansione, ci sono di sicuro.
+
+**La schedulazione non vive qui**: la fa il CronJob Kubernetes, che è già un cron. Il pod si
+limita a mettere in coda il lavoro quando viene svegliato — senza `ENQUEUE_ON_START` si
+sveglierebbe puntuale, troverebbe la coda vuota e uscirebbe senza fare niente.
+L'accodamento è idempotente (l'API tiene un solo job `pending` per nome), quindi non fa danni
+se lo stesso job è già stato richiesto dalla UI.
 
 ## Requisiti
 
@@ -51,6 +57,7 @@ MEDIA_ROOT=/data/photos
 LOG_LEVEL=trace
 SCAN_WORKERS=3
 GOMEMLIMIT=800MiB
+ENQUEUE_ON_START=
 ```
 
 `GOMEMLIMIT` è obbligatorio, non un'ottimizzazione: il garbage collector di Go non conosce i
@@ -61,8 +68,8 @@ si arriva vicino al mezzo giga.
 ## Sviluppo senza Go installato
 
 ```bash
-sh private/go.sh build ./...
-sh private/go.sh test ./...
+sh scripts/go.sh build ./...
+sh scripts/go.sh test ./...
 ```
 
 Lo script esegue il toolchain Go in un container montando due volumi di cache (moduli e
@@ -163,6 +170,6 @@ rename sulla stessa share è atomica e istantanea, e rende ogni errore recuperab
 ## Build
 
 ```dockerfile
-FROM golang:1.24-alpine AS build   # CGO_ENABLED=0, build statica
+FROM golang:1.25-alpine AS build   # CGO_ENABLED=0, build statica
 FROM alpine:3.21                   # + ffmpeg, libheif-tools, tzdata
 ```
