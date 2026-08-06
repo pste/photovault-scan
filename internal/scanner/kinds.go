@@ -4,6 +4,15 @@ import "strings"
 
 // Allowlist, non blocklist: le blocklist perdono sempre contro .AAE, .XMP,
 // .THM, .LRV e compagnia. Quello che non e' qui dentro non entra in archivio.
+//
+// L'elenco dei video e' cresciuto dopo il primo giro su un archivio vero: 127
+// .mpg, piu' webm, vob, wmv, f4v, m2t, flv, mxv e un rm erano finiti fra i
+// "file non gestiti" per ~7,7 GB di filmati veri, invisibili nella libreria.
+//
+// Restano deliberatamente FUORI i file di servizio AVCHD -- .cpi, .mpl, .bdm,
+// .tdt, .tid -- che stanno accanto ai video ma non contengono video, e i
+// formati audio (.mp3, .m4a, .wav, .ac3): photovault gestisce immagini e
+// video, e un file audio in una griglia di anteprime non ha senso.
 var kinds = map[string]string{
 	// immagini
 	"jpg": "image", "jpeg": "image", "png": "image", "gif": "image",
@@ -12,6 +21,11 @@ var kinds = map[string]string{
 	// video
 	"mp4": "video", "mov": "video", "m4v": "video", "avi": "video",
 	"mkv": "video", "mts": "video", "m2ts": "video", "3gp": "video",
+	"3g2": "video", "mpg": "video", "mpeg": "video", "mpe": "video",
+	"m2v": "video", "m2t": "video", "vob": "video", "wmv": "video",
+	"asf": "video", "flv": "video", "f4v": "video", "mxv": "video",
+	"webm": "video", "ogv": "video", "divx": "video", "rm": "video",
+	"dv": "video", "mod": "video", "tod": "video",
 	// raw: la riga viene creata, ma la thumbnail resta 'unsupported' in fase 2
 	"cr2": "raw", "cr3": "raw", "nef": "raw", "arw": "raw",
 	"dng": "raw", "raf": "raw", "orf": "raw", "rw2": "raw",
