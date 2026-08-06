@@ -46,15 +46,13 @@ type Folder struct {
 	Path     string `json:"path"`
 }
 
-// MediaItem e' una riga inviata dallo scan. I puntatori distinguono "assente"
-// da "zero": una foto senza GPS non e' una foto a latitudine 0.
-type MediaItem struct {
-	FolderID    int      `json:"folder_id"`
-	FileName    string   `json:"file_name"`
-	MediaKind   string   `json:"media_kind"`
-	Ext         string   `json:"ext"`
-	FileSize    int64    `json:"file_size"`
-	Modified    string   `json:"modified"`
+// MediaMeta sono i metadati che si ricavano solo aprendo il file, quindi solo
+// nel job thumbs: lo scan si limita a camminare la share.
+//
+// I puntatori distinguono "assente" da "zero": una foto senza GPS non e' una
+// foto a latitudine 0. E' anche cio' che permette all'API di aggiornare in
+// COALESCE, senza cancellare un valore gia' noto.
+type MediaMeta struct {
 	Width       *int     `json:"width,omitempty"`
 	Height      *int     `json:"height,omitempty"`
 	DurationS   *float64 `json:"duration_s,omitempty"`
@@ -66,21 +64,35 @@ type MediaItem struct {
 	GpsLon      *float64 `json:"gps_lon,omitempty"`
 }
 
-type PendingMedia struct {
-	MediaID     int    `json:"media_id"`
-	FileName    string `json:"file_name"`
-	MediaKind   string `json:"media_kind"`
-	Ext         string `json:"ext"`
-	Orientation *int   `json:"orientation"`
-	FolderPath  string `json:"folder_path"`
-	RelPath     string `json:"rel_path"`
+// MediaItem e' una riga inviata dallo scan: solo cio' che si sa da readdir,
+// senza aprire il file. L'unico campo di MediaMeta valorizzato e' CaptureTS, e
+// vale l'mtime finche' il job thumbs non legge la data vera dall'EXIF.
+type MediaItem struct {
+	FolderID  int    `json:"folder_id"`
+	FileName  string `json:"file_name"`
+	MediaKind string `json:"media_kind"`
+	Ext       string `json:"ext"`
+	FileSize  int64  `json:"file_size"`
+	Modified  string `json:"modified"`
+	MediaMeta
 }
 
+type PendingMedia struct {
+	MediaID    int    `json:"media_id"`
+	FileName   string `json:"file_name"`
+	MediaKind  string `json:"media_kind"`
+	Ext        string `json:"ext"`
+	FolderPath string `json:"folder_path"`
+	RelPath    string `json:"rel_path"`
+}
+
+// ThumbResult riporta l'esito della generazione e, insieme, i metadati letti
+// nella stessa apertura del file. Viaggiano insieme perche' sono prodotti dallo
+// stesso lavoro: una seconda passata costerebbe una seconda lettura su CIFS.
 type ThumbResult struct {
 	MediaID     int    `json:"media_id"`
 	ThumbStatus string `json:"thumb_status"`
-	Width       *int   `json:"width,omitempty"`
-	Height      *int   `json:"height,omitempty"`
+	MediaMeta
 }
 
 type ReconcileOutcome struct {

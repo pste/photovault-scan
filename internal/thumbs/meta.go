@@ -1,48 +1,16 @@
-package scanner
+package thumbs
 
 import (
 	"encoding/json"
-	"image"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
-	// Registrano i decoder: servono a image.DecodeConfig, che legge solo
-	// l'intestazione e non decodifica i pixel.
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
-
 	"github.com/pste/photovault-scan/internal/api"
 )
-
-// enrich aggiunge al record i metadati ricavabili dal file.
-// Non e' mai fatale: un file che non si riesce a interpretare entra comunque in
-// archivio con i soli dati del filesystem, e la thumbnail dira' il resto.
-func enrich(item *api.MediaItem, path string, log *slog.Logger) {
-	switch item.MediaKind {
-	case "image", "raw":
-		// Prima l'EXIF: e' quello che porta data di scatto, fotocamera,
-		// orientamento e GPS. Le dimensioni vengono dopo, come ripiego.
-		readExif(item, path, log)
-		if item.Width == nil {
-			imageMeta(item, path, log)
-		}
-	case "video":
-		videoMeta(item, path, log)
-	}
-
-	// Senza data di scatto si ripiega sull'mtime: e' sempre meglio di niente
-	// per ordinare la griglia, ed e' il caso normale per i file senza EXIF.
-	if item.CaptureTS == nil {
-		modified := item.Modified
-		item.CaptureTS = &modified
-	}
-}
 
 // captureTS accetta una data solo se e' plausibile, e restituisce nil altrimenti.
 //
@@ -50,8 +18,8 @@ func enrich(item *api.MediaItem, path string, log *slog.Logger) {
 // data azzerata -- "0000:00:00 00:00:00", frequentissimo nelle immagini passate
 // da WhatsApp -- viene normalizzato ad anno 0, mese 0, giorno 0, cioe'
 // -0001-11-30. Quella data supera IsZero(), arriva a PostgreSQL e fa fallire
-// l'INSERT dell'intero batch con SQLSTATE 22007. Non e' un caso di scuola: e'
-// successo al primo scan di un archivio vero, dopo 9000 file.
+// l'UPDATE con SQLSTATE 22007. Non e' un caso di scuola: e' successo al primo
+// scan di un archivio vero, dopo 9000 file.
 //
 // Il limite superiore serve contro il problema opposto: una fotocamera con
 // l'orologio sballato in avanti resterebbe in cima alla griglia per sempre.
@@ -69,9 +37,9 @@ func captureTS(when time.Time) *string {
 // I campi ASCII dell'EXIF sono terminati da NUL e alcune fotocamere ci
 // scrivono dentro anche il padding: la stringa che arriva dal decoder puo'
 // quindi contenere 0x00. PostgreSQL non sa memorizzarlo -- nessun testo puo'
-// contenere il byte zero, nemmeno in un varchar -- e rifiuta l'INSERT
-// dell'INTERO batch con SQLSTATE 22021. E' successo al secondo scan
-// dell'archivio vero, dopo 16.000 file.
+// contenere il byte zero, nemmeno in un varchar -- e rifiuta la scrittura con
+// SQLSTATE 22021. E' successo al secondo scan dell'archivio vero, dopo 16.000
+// file.
 //
 // Stesso trattamento per le sequenze UTF-8 non valide, che danno lo stesso
 // errore: l'EXIF non dichiara una codifica, e una fotocamera che scrive il
@@ -85,27 +53,6 @@ func cleanText(s string) string {
 		return r
 	}, s)
 	return strings.TrimSpace(s)
-}
-
-func imageMeta(item *api.MediaItem, path string, log *slog.Logger) {
-	file, err := os.Open(path)
-	if err != nil {
-		log.Warn("apertura fallita", "path", path, "err", err)
-		return
-	}
-	defer file.Close()
-
-	// DecodeConfig legge solo l'intestazione: e' il modo economico di sapere le
-	// dimensioni senza pagare la decodifica completa dell'immagine.
-	cfg, _, err := image.DecodeConfig(file)
-	if err != nil {
-		// HEIC, AVIF e i RAW non sono gestiti dalla libreria standard: le
-		// dimensioni arriveranno dal job thumbs, che li decodifica davvero.
-		log.Debug("dimensioni non leggibili", "path", path, "err", err)
-		return
-	}
-	item.Width = &cfg.Width
-	item.Height = &cfg.Height
 }
 
 // Struttura minima dell'output di ffprobe: si leggono solo i campi utili.
@@ -123,8 +70,9 @@ type probeOutput struct {
 }
 
 // videoMeta ricava durata, dimensioni e data di creazione con una sola
-// invocazione di ffprobe.
-func videoMeta(item *api.MediaItem, path string, log *slog.Logger) {
+// invocazione di ffprobe. Non e' mai fatale: un video illeggibile resta in
+// archivio con i soli dati del filesystem.
+func videoMeta(meta *api.MediaMeta, path string, log *slog.Logger) {
 	cmd := exec.Command("ffprobe",
 		"-v", "quiet",
 		"-print_format", "json",
@@ -145,14 +93,14 @@ func videoMeta(item *api.MediaItem, path string, log *slog.Logger) {
 	}
 
 	if seconds, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil && seconds > 0 {
-		item.DurationS = &seconds
+		meta.DurationS = &seconds
 	}
 
 	for _, stream := range probe.Streams {
 		if stream.CodecType == "video" && stream.Width > 0 {
 			width, height := stream.Width, stream.Height
-			item.Width = &width
-			item.Height = &height
+			meta.Width = &width
+			meta.Height = &height
 			break
 		}
 	}
@@ -160,7 +108,7 @@ func videoMeta(item *api.MediaItem, path string, log *slog.Logger) {
 	if raw, ok := probe.Format.Tags["creation_time"]; ok {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 			if captured := captureTS(parsed); captured != nil {
-				item.CaptureTS = captured
+				meta.CaptureTS = captured
 			}
 		}
 	}

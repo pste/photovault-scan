@@ -1,4 +1,4 @@
-package scanner
+package thumbs
 
 import (
 	"testing"

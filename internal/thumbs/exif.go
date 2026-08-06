@@ -1,8 +1,8 @@
-package scanner
+package thumbs
 
 import (
+	"io"
 	"log/slog"
-	"os"
 
 	"github.com/evanoberholster/imagemeta"
 
@@ -15,14 +15,17 @@ import (
 // resta statico) ed e' l'unica libreria mantenuta che legge l'EXIF anche da
 // HEIC, TIFF, CR2/CR3 e DNG, non solo da JPEG.
 //
-// Non e' mai fatale: una foto senza EXIF, o con un EXIF malformato, entra
-// comunque in archivio con i soli dati del filesystem.
-func readExif(item *api.MediaItem, path string, log *slog.Logger) {
-	file, err := os.Open(path)
-	if err != nil {
+// Prende un file gia' aperto e lo riavvolge da solo: cosi' la stessa apertura
+// serve sia all'EXIF sia alla decodifica dell'immagine, e su CIFS si paga una
+// open per file invece di due.
+//
+// Non e' mai fatale: una foto senza EXIF, o con un EXIF malformato, resta in
+// archivio con i soli dati del filesystem.
+func readExif(meta *api.MediaMeta, file io.ReadSeeker, path string, log *slog.Logger) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return
 	}
-	defer file.Close()
+	defer file.Seek(0, io.SeekStart)
 
 	data, err := imagemeta.Decode(file)
 	if err != nil {
@@ -33,20 +36,20 @@ func readExif(item *api.MediaItem, path string, log *slog.Logger) {
 	}
 
 	if captured := captureTS(data.OriginalDate()); captured != nil {
-		item.CaptureTS = captured
+		meta.CaptureTS = captured
 	}
 
 	if make := cleanText(data.IFD0.Make); make != "" {
-		item.CameraMake = &make
+		meta.CameraMake = &make
 	}
 	if model := cleanText(data.IFD0.Model); model != "" {
-		item.CameraModel = &model
+		meta.CameraModel = &model
 	}
 
-	// L'orientamento serve al job thumbs per raddrizzare l'immagine prima di
+	// L'orientamento serve subito qui sotto per raddrizzare l'immagine prima di
 	// ridimensionarla. 1 significa "gia' dritta" e non vale la pena salvarlo.
 	if orientation := int(data.IFD0.Orientation); orientation > 1 && orientation <= 8 {
-		item.Orientation = &orientation
+		meta.Orientation = &orientation
 	}
 
 	// GPSInfo non espone un modo per distinguere "assente" da "zero", ma
@@ -55,7 +58,7 @@ func readExif(item *api.MediaItem, path string, log *slog.Logger) {
 	lat := data.GPS.Latitude()
 	lon := data.GPS.Longitude()
 	if lat != 0 || lon != 0 {
-		item.GpsLat = &lat
-		item.GpsLon = &lon
+		meta.GpsLat = &lat
+		meta.GpsLon = &lon
 	}
 }

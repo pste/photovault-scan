@@ -90,7 +90,10 @@ func (t *Thumbnailer) sourcePath(item api.PendingMedia) string {
 func (t *Thumbnailer) process(item api.PendingMedia) api.ThumbResult {
 	result := api.ThumbResult{MediaID: item.MediaID, ThumbStatus: "error"}
 
-	src, err := t.decode(item)
+	// I metadati escono dalla stessa apertura della decodifica, e vengono
+	// restituiti anche quando la thumbnail fallisce: un RAW resta senza
+	// anteprima, ma la sua data di scatto e le sue coordinate sono valide.
+	src, err := t.decode(item, &result.MediaMeta)
 	if err != nil {
 		if strings.Contains(err.Error(), "non supportato") {
 			result.ThumbStatus = "unsupported"
@@ -103,8 +106,9 @@ func (t *Thumbnailer) process(item api.PendingMedia) api.ThumbResult {
 
 	// L'orientamento EXIF va applicato PRIMA di ridimensionare: dimenticarlo
 	// significa meta' delle foto verticali storte nella griglia, che e' il bug
-	// piu' visibile che ci sia.
-	src = applyOrientation(src, item.Orientation)
+	// piu' visibile che ci sia. Arriva dal file appena letto e non dal
+	// database, quindi questo job non dipende da cosa sapeva lo scan.
+	src = applyOrientation(src, result.Orientation)
 
 	bounds := src.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
@@ -125,12 +129,34 @@ func (t *Thumbnailer) process(item api.PendingMedia) api.ThumbResult {
 	return result
 }
 
-func (t *Thumbnailer) decode(item api.PendingMedia) (image.Image, error) {
+// decode riempie i metadati e restituisce l'immagine da ridurre.
+//
+// Le due cose stanno insieme perche' vengono dalla stessa lettura del file: nel
+// caso normale -- JPEG e PNG, cioe' quasi tutto l'archivio -- una sola
+// os.Open serve sia all'EXIF sia alla decodifica. Su CIFS una apertura in meno
+// per file, su 146.000 file, e' la ragione di questa forma.
+func (t *Thumbnailer) decode(item api.PendingMedia, meta *api.MediaMeta) (image.Image, error) {
 	path := t.sourcePath(item)
 
-	switch {
-	case item.MediaKind == "video":
+	// I video non hanno EXIF: durata, dimensioni e data vengono da ffprobe, e
+	// il fotogramma da ffmpeg. Nessuna delle due passa da un file aperto qui.
+	if item.MediaKind == "video" {
+		videoMeta(meta, path, t.log)
 		return t.decodeVideo(path)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// L'EXIF si legge sempre, anche per i formati di cui non sappiamo fare
+	// l'anteprima: imagemeta legge HEIC e RAW, e per un RAW la data di scatto
+	// e le coordinate sono meta' del valore del file.
+	readExif(meta, file, path, t.log)
+
+	switch {
 	case item.Ext == "heic" || item.Ext == "heif" || item.Ext == "avif":
 		return t.decodeHeif(path)
 	case item.MediaKind == "raw":
@@ -138,7 +164,8 @@ func (t *Thumbnailer) decode(item api.PendingMedia) (image.Image, error) {
 		// gia' presente nel file senza demosaicizzare.
 		return nil, fmt.Errorf("formato non supportato: raw")
 	default:
-		return decodeFile(path)
+		img, _, err := image.Decode(file)
+		return img, err
 	}
 }
 

@@ -134,15 +134,22 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 			folderIDs[folderPath] = folderID
 		}
 
+		modified := info.ModTime().UTC().Format(time.RFC3339)
 		item := api.MediaItem{
 			FolderID:  folderID,
 			FileName:  d.Name(),
 			MediaKind: kind,
 			Ext:       strings.ToLower(ext),
 			FileSize:  info.Size(),
-			Modified:  info.ModTime().UTC().Format(time.RFC3339),
+			Modified:  modified,
 		}
-		enrich(&item, path, s.log)
+
+		// Data di scatto provvisoria: l'mtime. Quella vera la legge il job
+		// thumbs dall'EXIF, nella stessa apertura in cui decodifica il file.
+		// Senza questo ripiego i file nuovi resterebbero in fondo alla griglia
+		// -- media_capture_idx ordina capture_ts DESC NULLS LAST -- fino alla
+		// generazione dell'anteprima.
+		item.CaptureTS = &modified
 
 		batch = append(batch, item)
 		if len(batch) >= s.cfg.BatchSize {
