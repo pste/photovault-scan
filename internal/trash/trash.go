@@ -40,7 +40,7 @@ func (t *Trash) thumbPath(mediaID int, size string) string {
 // Non si usa mai os.Remove: una rename sulla stessa share e' atomica e
 // istantanea, e rende ogni errore recuperabile con un mv. Lo svuotamento vero
 // avviene solo dopo i giorni di ritenzione, col job trashpurge.
-func (t *Trash) Apply() (string, error) {
+func (t *Trash) Apply(jobID int) (string, error) {
 	moved, failed := 0, 0
 
 	for {
@@ -71,6 +71,7 @@ func (t *Trash) Apply() (string, error) {
 			progress = true
 		}
 
+		t.client.Heartbeat(jobID)
 		if !progress {
 			break
 		}
@@ -124,7 +125,7 @@ func (t *Trash) moveOne(item api.TrashItem) error {
 
 // Purge elimina definitivamente i file rimasti nel cestino oltre la ritenzione.
 // E' l'unico punto di tutto photovault in cui un file viene davvero cancellato.
-func (t *Trash) Purge() (string, error) {
+func (t *Trash) Purge(jobID int) (string, error) {
 	removed, failed := 0, 0
 	var freed int64
 
@@ -159,6 +160,7 @@ func (t *Trash) Purge() (string, error) {
 			removed++
 			freed += item.FileSize
 		}
+		t.client.Heartbeat(jobID)
 	}
 
 	return fmt.Sprintf("%d eliminati (%.1f MB liberati), %d falliti",

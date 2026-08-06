@@ -20,7 +20,7 @@ func main() {
 	cfg := config.Load()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 
-	client := api.New(cfg.APIURL, cfg.APIToken)
+	client := api.New(cfg.APIURL, cfg.APIToken, log)
 	scan := scanner.New(cfg, client, log)
 	thumbnailer := thumbs.New(cfg, client, log)
 	bin := trash.New(cfg, client, log)
@@ -30,7 +30,10 @@ func main() {
 	//
 	// I due job del cestino stanno qui perche' questo e' l'unico pod con la
 	// share montata in scrittura.
-	handlers := map[string]func() (string, error){
+	// Gli handler ricevono il job id perche' devono mandarne il battito a ogni
+	// blocco di lavoro: e' cosi' che l'API distingue un job lento da uno il cui
+	// pod e' sparito.
+	handlers := map[string]func(int) (string, error){
 		"scan":       scan.Run,
 		"thumbs":     thumbnailer.Run,
 		"trashapply": bin.Apply,
@@ -71,7 +74,7 @@ func main() {
 		}
 
 		log.Info("job preso in carico", "job_id", job.JobID, "name", job.Name)
-		result, err := handlers[job.Name]()
+		result, err := handlers[job.Name](job.JobID)
 
 		status := "done"
 		if err != nil {

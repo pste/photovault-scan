@@ -33,7 +33,7 @@ func New(cfg config.Config, client *api.Client, log *slog.Logger) *Scanner {
 // l'ON CONFLICT lato API a distinguere i due casi. Cosi' questo pod non deve
 // interrogare il database per fare change detection, e il flusso resta
 // "cammina, leggi, spedisci".
-func (s *Scanner) Run() (string, error) {
+func (s *Scanner) Run(jobID int) (string, error) {
 	startedAt := time.Now().UTC()
 
 	roots, err := s.client.GetRoots()
@@ -53,7 +53,7 @@ func (s *Scanner) Run() (string, error) {
 
 	summary := make([]string, 0, len(roots))
 	for _, root := range roots {
-		count, err := s.scanRoot(root, startedAt)
+		count, err := s.scanRoot(root, startedAt, jobID)
 		if err != nil {
 			return "", err
 		}
@@ -62,7 +62,7 @@ func (s *Scanner) Run() (string, error) {
 	return strings.Join(summary, "; "), nil
 }
 
-func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
+func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, error) {
 	base := filepath.Join(s.cfg.MediaRoot, root.RelPath)
 	s.log.Info("scansione avviata", "root", root.Name, "path", base)
 
@@ -87,6 +87,7 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 		}
 		total += len(batch)
 		batch = batch[:0]
+		s.client.Heartbeat(jobID)
 		return nil
 	}
 
@@ -101,6 +102,7 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 		}
 		totalOthers += len(others)
 		others = others[:0]
+		s.client.Heartbeat(jobID)
 		return nil
 	}
 

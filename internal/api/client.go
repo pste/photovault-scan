@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -16,12 +17,14 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	log     *slog.Logger
 }
 
-func New(baseURL, token string) *Client {
+func New(baseURL, token string, log *slog.Logger) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
+		log:     log,
 		// Timeout generoso: il reconcile a fine scansione tocca l'intera
 		// tabella media e su un archivio grande non e' istantaneo.
 		http: &http.Client{Timeout: 120 * time.Second},
@@ -151,6 +154,24 @@ func (c *Client) ClaimJob(names []string) (*Job, error) {
 	var job *Job
 	err := c.do("POST", "/api/internal/jobs/claim", map[string]any{"names": names}, &job)
 	return job, err
+}
+
+// Heartbeat dice all'API che questo pod e' vivo e sta ancora lavorando sul job.
+// Va mandato a ogni blocco di lavoro concluso: e' cio' che distingue, per chi
+// guarda da fuori, un job lento da un job il cui pod e' sparito.
+//
+// Un errore qui non e' fatale: il lavoro fatto e' comunque salvato, e il giro
+// dopo si riprende dalla coda in database.
+func (c *Client) Heartbeat(jobID int) {
+	if jobID <= 0 {
+		return
+	}
+	if err := c.do("POST", fmt.Sprintf("/api/internal/jobs/%d/heartbeat", jobID), nil, nil); err != nil {
+		// Il 409 dice che il job non risulta piu' in esecuzione: qualcuno lo ha
+		// chiuso a mano, o il reaper lo ha gia' recuperato. Si continua
+		// comunque: interrompere butterebbe via lavoro gia' fatto.
+		c.log.Warn("battito rifiutato", "job_id", jobID, "err", err)
+	}
 }
 
 func (c *Client) UpdateJob(jobID int, status, result string) error {

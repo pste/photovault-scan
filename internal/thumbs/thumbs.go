@@ -37,7 +37,7 @@ func New(cfg config.Config, client *api.Client, log *slog.Logger) *Thumbnailer {
 // Run svuota la coda delle thumbnail: chiede all'API cosa manca, genera, riferisce.
 // La coda e' la colonna thumb_status, quindi il lavoro riprende da solo dopo un
 // crash senza bisogno di alcun checkpoint.
-func (t *Thumbnailer) Run() (string, error) {
+func (t *Thumbnailer) Run(jobID int) (string, error) {
 	done, failed, skipped := 0, 0, 0
 
 	for {
@@ -66,6 +66,7 @@ func (t *Thumbnailer) Run() (string, error) {
 		if err := t.client.SendThumbs(results); err != nil {
 			return "", fmt.Errorf("invio dei risultati: %w", err)
 		}
+		t.client.Heartbeat(jobID)
 	}
 
 	return fmt.Sprintf("%d generate, %d non supportate, %d fallite", done, skipped, failed), nil
