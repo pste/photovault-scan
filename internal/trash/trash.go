@@ -88,6 +88,12 @@ func (t *Trash) moveOne(item api.TrashItem) error {
 	}
 
 	if err := os.Rename(src, dst); err != nil {
+		// Una cartella si sposta solo con la rename: il ripiego qui sotto copia
+		// un file, e su una directory darebbe un errore fuorviante. Sulla
+		// stessa share la rename non fallisce mai.
+		if item.FolderID > 0 {
+			return fmt.Errorf("rename della cartella: %w", err)
+		}
 		// La rename fallisce se sorgente e destinazione stanno su filesystem
 		// diversi. Sulla stessa share non capita, ma in sviluppo si', quindi
 		// si ripiega su copia piu' cancellazione.
@@ -100,10 +106,17 @@ func (t *Trash) moveOne(item api.TrashItem) error {
 	}
 
 	// Le thumbnail seguono il file: la riga media sparisce dalla libreria,
-	// quindi resterebbero orfane sulla share a occupare spazio.
-	for _, size := range []string{"s", "m"} {
-		if err := os.Remove(t.thumbPath(item.MediaID, size)); err != nil && !os.IsNotExist(err) {
-			t.log.Warn("thumbnail non rimossa", "media_id", item.MediaID, "size", size, "err", err)
+	// quindi resterebbero orfane sulla share a occupare spazio. Per una
+	// cartella sono quelle di tutti i media che conteneva.
+	ids := item.ThumbMediaIDs
+	if item.MediaID > 0 {
+		ids = append(ids, item.MediaID)
+	}
+	for _, id := range ids {
+		for _, size := range []string{"s", "m"} {
+			if err := os.Remove(t.thumbPath(id, size)); err != nil && !os.IsNotExist(err) {
+				t.log.Warn("thumbnail non rimossa", "media_id", id, "size", size, "err", err)
+			}
 		}
 	}
 	return nil
@@ -126,7 +139,10 @@ func (t *Trash) Purge() (string, error) {
 
 		for _, item := range expired {
 			path := filepath.Join(t.cfg.MediaRoot, item.RelPath, item.TrashPath)
-			err := os.Remove(path)
+			// RemoveAll e non Remove: una riga di cartella punta a una
+			// directory, che a questo punto e' scaduta con tutto il contenuto.
+			// Su un file si comporta esattamente come Remove.
+			err := os.RemoveAll(path)
 			if err != nil && !os.IsNotExist(err) {
 				t.log.Warn("eliminazione fallita", "trash_id", item.TrashID, "err", err)
 				if reportErr := t.client.CompletePurge(item.TrashID, "error", err.Error()); reportErr != nil {

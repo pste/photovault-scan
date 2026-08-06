@@ -229,14 +229,22 @@ func (c *Client) SendThumbs(items []ThumbResult) error {
 	return c.do("POST", "/api/internal/thumb/batch", map[string]any{"items": items}, nil)
 }
 
-// TrashItem e' un file da spostare nel cestino (o da eliminare, se scaduto).
-// I percorsi sono relativi: il mount e' una proprieta' del pod.
+// TrashItem e' un file -- o un'intera cartella -- da spostare nel cestino, o da
+// eliminare se scaduto. I percorsi sono relativi: il mount e' una proprieta'
+// del pod.
+//
+// FolderID valorizzato significa cartella: si sposta con la stessa rename, ma
+// le thumbnail da togliere sono quelle di tutti i media contenuti, elencati in
+// ThumbMediaIDs, perche' vivono in .photovault/thumbs/ e non seguono la
+// cartella.
 type TrashItem struct {
-	TrashID      int    `json:"trash_id"`
-	MediaID      int    `json:"media_id"`
-	OriginalPath string `json:"original_path"`
-	TrashPath    string `json:"trash_path"`
-	RelPath      string `json:"rel_path"`
+	TrashID       int    `json:"trash_id"`
+	MediaID       int    `json:"media_id"`
+	FolderID      int    `json:"folder_id"`
+	ThumbMediaIDs []int  `json:"thumb_media_ids"`
+	OriginalPath  string `json:"original_path"`
+	TrashPath     string `json:"trash_path"`
+	RelPath       string `json:"rel_path"`
 	// ,string perche' node-postgres serializza i bigint come STRINGA JSON:
 	// lo fa apposta, un bigint puo' eccedere il numero sicuro di JavaScript.
 	// Senza questo tag l'unmarshal fallisce con "cannot unmarshal string".
