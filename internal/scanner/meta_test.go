@@ -52,3 +52,31 @@ func TestCaptureTSScartaLaDataDelPrimoScan(t *testing.T) {
 		t.Error("la data che ha rotto lo scan verrebbe ancora inviata all'API")
 	}
 }
+
+// Il caso che ha fatto fallire il secondo scan dell'archivio vero: un campo
+// EXIF con dentro il NUL di terminazione arriva a PostgreSQL e fa fallire
+// l'INSERT dell'intero batch con SQLSTATE 22021.
+func TestCleanText(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"nul di terminazione", "Canon\x00", "Canon"},
+		{"nul di padding", "NIKON D90\x00\x00\x00\x00", "NIKON D90"},
+		{"solo nul", "\x00\x00", ""},
+		{"latin-1 non valido in utf-8", "Caf\xe9", "Caf"},
+		{"altri caratteri di controllo", "SM-G950F\r\n", "SM-G950F"},
+		{"spazi di contorno", "  Samsung  ", "Samsung"},
+		{"accentata valida", "Cámara", "Cámara"},
+		{"gia' pulita", "Canon EOS 550D", "Canon EOS 550D"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cleanText(tc.in); got != tc.want {
+				t.Errorf("cleanText(%q) = %q, atteso %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

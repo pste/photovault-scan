@@ -36,10 +36,10 @@ func readExif(item *api.MediaItem, path string, log *slog.Logger) {
 		item.CaptureTS = captured
 	}
 
-	if make := data.IFD0.Make; make != "" {
+	if make := cleanText(data.IFD0.Make); make != "" {
 		item.CameraMake = &make
 	}
-	if model := data.IFD0.Model; model != "" {
+	if model := cleanText(data.IFD0.Model); model != "" {
 		item.CameraModel = &model
 	}
 

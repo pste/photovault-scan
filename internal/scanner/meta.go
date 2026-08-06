@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	// Registrano i decoder: servono a image.DecodeConfig, che legge solo
 	// l'intestazione e non decodifica i pixel.
@@ -59,6 +61,30 @@ func captureTS(when time.Time) *string {
 	}
 	formatted := when.UTC().Format(time.RFC3339)
 	return &formatted
+}
+
+// cleanText rende una stringa EXIF memorizzabile, e restituisce "" se non
+// resta niente di utile.
+//
+// I campi ASCII dell'EXIF sono terminati da NUL e alcune fotocamere ci
+// scrivono dentro anche il padding: la stringa che arriva dal decoder puo'
+// quindi contenere 0x00. PostgreSQL non sa memorizzarlo -- nessun testo puo'
+// contenere il byte zero, nemmeno in un varchar -- e rifiuta l'INSERT
+// dell'INTERO batch con SQLSTATE 22021. E' successo al secondo scan
+// dell'archivio vero, dopo 16.000 file.
+//
+// Stesso trattamento per le sequenze UTF-8 non valide, che danno lo stesso
+// errore: l'EXIF non dichiara una codifica, e una fotocamera che scrive il
+// nome del modello in Latin-1 e' del tutto legittima.
+func cleanText(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
 }
 
 func imageMeta(item *api.MediaItem, path string, log *slog.Logger) {
