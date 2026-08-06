@@ -74,7 +74,9 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 	// non deve generare 500 chiamate di registrazione.
 	folderIDs := make(map[string]int)
 	batch := make([]api.MediaItem, 0, s.cfg.BatchSize)
+	others := make([]api.OtherFile, 0, s.cfg.BatchSize)
 	total := 0
+	totalOthers := 0
 
 	flush := func() error {
 		if len(batch) == 0 {
@@ -85,6 +87,20 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 		}
 		total += len(batch)
 		batch = batch[:0]
+		return nil
+	}
+
+	// I file non gestiti hanno una coda a parte: non entrano in media, quindi
+	// non hanno una pipeline, e non devono rallentare quella dei media.
+	flushOthers := func() error {
+		if len(others) == 0 {
+			return nil
+		}
+		if err := s.client.SendOthers(others); err != nil {
+			return err
+		}
+		totalOthers += len(others)
+		others = others[:0]
 		return nil
 	}
 
@@ -108,9 +124,6 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 
 		ext := strings.TrimPrefix(filepath.Ext(d.Name()), ".")
 		kind, ok := kindOf(ext)
-		if !ok {
-			return nil
-		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -123,6 +136,25 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 			return nil
 		}
 		folderPath := toFolderPath(relDir)
+
+		// Quello che l'allowlist non riconosce non e' un media, ma esiste: si
+		// registra a parte, con il percorso come testo. Non si chiede un
+		// folder_id perche' una cartella di soli file non gestiti non deve
+		// comparire nell'albero di Sfoglia come cartella vuota.
+		if !ok {
+			others = append(others, api.OtherFile{
+				RootID:   root.RootID,
+				Path:     folderPath,
+				FileName: d.Name(),
+				Ext:      strings.ToLower(ext),
+				FileSize: info.Size(),
+				Modified: info.ModTime().UTC().Format(time.RFC3339),
+			})
+			if len(others) >= s.cfg.BatchSize {
+				return flushOthers()
+			}
+			return nil
+		}
 
 		folderID, ok := folderIDs[folderPath]
 		if !ok {
@@ -164,6 +196,9 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 	if err := flush(); err != nil {
 		return total, err
 	}
+	if err := flushOthers(); err != nil {
+		return total, err
+	}
 
 	outcome, err := s.client.Reconcile(root.RootID, startedAt)
 	if err != nil {
@@ -177,7 +212,8 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time) (int, error) {
 	}
 
 	s.log.Info("scansione conclusa",
-		"root", root.Name, "file", total, "visti", outcome.Seen, "mancanti", outcome.Missing)
+		"root", root.Name, "file", total, "non_gestiti", totalOthers,
+		"visti", outcome.Seen, "mancanti", outcome.Missing)
 	return total, nil
 }
 

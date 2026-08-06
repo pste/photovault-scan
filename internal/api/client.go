@@ -189,6 +189,22 @@ func (c *Client) RegisterFolder(rootID int, path string) (*Folder, error) {
 	return &out, err
 }
 
+// OtherFile e' un file che photovault non gestisce: ne' immagine, ne' video,
+// ne' RAW. Non entra in media perche' non ha una pipeline da percorrere; serve
+// a sapere cosa c'e' sulla share oltre alla libreria, e a poterlo cestinare.
+type OtherFile struct {
+	RootID   int    `json:"root_id"`
+	Path     string `json:"path"`
+	FileName string `json:"file_name"`
+	Ext      string `json:"ext"`
+	FileSize int64  `json:"file_size"`
+	Modified string `json:"modified"`
+}
+
+func (c *Client) SendOthers(items []OtherFile) error {
+	return c.do("POST", "/api/internal/scan/other/batch", map[string]any{"items": items}, nil)
+}
+
 func (c *Client) SendMedia(items []MediaItem) error {
 	return c.do("POST", "/api/internal/scan/media/batch", map[string]any{"items": items}, nil)
 }
