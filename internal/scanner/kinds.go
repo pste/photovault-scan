@@ -49,9 +49,36 @@ func kindOf(ext string) (string, bool) {
 	return kind, ok
 }
 
+// Estensioni di directory che sono in realta' il pacchetto interno di
+// un'applicazione: dentro c'e' la sua cache, non le foto dell'utente.
+//
+// Il caso che le ha motivate: "Lightroom 5 Catalog Smart Previews.lrdata"
+// conteneva 386 DNG da 387 kB in media, sparsi su 383 sottocartelle. Sono le
+// Smart Preview del catalogo -- proxy che Lightroom rigenera da solo -- e in
+// libreria comparivano come 386 foto senza anteprima possibile, perche' un DNG
+// photovault non lo sa decodificare. Non e' un problema di formato: e' che quei
+// file non sono fotografie dell'utente, esattamente come non lo sono le
+// thumbnail dentro .photovault.
+//
+// Sull'estensione e non sul nome perche' il nome del pacchetto contiene quello
+// del catalogo, che cambia da persona a persona.
+var skipDirSuffixes = []string{
+	".lrdata",         // cache di un catalogo Lightroom
+	".lrlibrary",      // catalogo Lightroom CC
+	".photoslibrary",  // libreria Foto di macOS
+	".aplibrary",      // libreria Aperture
+	".migratedaplibrary",
+}
+
 func skipDir(name string) bool {
 	if skipDirs[name] {
 		return true
+	}
+	lower := strings.ToLower(name)
+	for _, suffix := range skipDirSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
 	}
 	// Le directory nascoste non contengono foto dell'utente, e su macOS/NAS
 	// ne compaiono parecchie.

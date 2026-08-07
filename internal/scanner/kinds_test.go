@@ -45,3 +45,39 @@ func TestKindOf(t *testing.T) {
 		})
 	}
 }
+
+// I pacchetti delle applicazioni non contengono foto dell'utente: dentro
+// "Lightroom 5 Catalog Smart Previews.lrdata" c'erano 386 DNG che in libreria
+// comparivano come foto senza anteprima possibile.
+func TestSkipDirPacchettiDelleApplicazioni(t *testing.T) {
+	saltate := []string{
+		"Lightroom 5 Catalog Smart Previews.lrdata",
+		"Catalogo di Steo Smart Previews.LRDATA",
+		"Foto Library.photoslibrary",
+		"Vecchia libreria.aplibrary",
+		".photovault",
+		"@eaDir",
+		".DS_Store",
+	}
+	for _, name := range saltate {
+		if !skipDir(name) {
+			t.Errorf("skipDir(%q) = false, dovrebbe saltarla", name)
+		}
+	}
+
+	// Il nome del pacchetto contiene quello del catalogo, quindi il criterio e'
+	// il suffisso. Ma una cartella che di quel suffisso ha solo un pezzo, o che
+	// lo contiene in mezzo, e' una cartella normale e va scansionata.
+	tenute := []string{
+		"2019-08 Barcellona",
+		"catalogo lightroom",
+		"lrdata",
+		"foto.lrdata.vecchie",
+		"Sabaudia",
+	}
+	for _, name := range tenute {
+		if skipDir(name) {
+			t.Errorf("skipDir(%q) = true, dovrebbe scansionarla", name)
+		}
+	}
+}
