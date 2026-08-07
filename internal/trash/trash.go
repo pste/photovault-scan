@@ -108,13 +108,19 @@ func (t *Trash) moveOne(item api.TrashItem) error {
 		}
 	}
 
-	// Le thumbnail seguono il file: la riga media sparisce dalla libreria,
-	// quindi resterebbero orfane sulla share a occupare spazio. Per una
-	// cartella sono quelle di tutti i media che conteneva.
-	ids := item.ThumbMediaIDs
-	if item.MediaID > 0 {
-		ids = append(ids, item.MediaID)
-	}
+	// La thumbnail di un singolo file NON si cancella qui: resta finche' il
+	// file e' nel cestino, cosi' la pagina Cestino puo' mostrarla e si vede
+	// cosa si sta per buttare. Sparisce col file, al trashpurge.
+	//
+	// Per una cartella invece si cancellano subito, e non e' un'incoerenza: gli
+	// id dei media che conteneva esistono solo adesso, perche' l'API cancella
+	// quelle righe insieme alla cartella. Al purge non ci sarebbe piu' modo di
+	// sapere quali thumbnail togliere, e resterebbero orfane per sempre.
+	t.removeThumbs(item.ThumbMediaIDs)
+	return nil
+}
+
+func (t *Trash) removeThumbs(ids []int) {
 	for _, id := range ids {
 		for _, size := range []string{"s", "m"} {
 			if err := os.Remove(t.thumbPath(id, size)); err != nil && !os.IsNotExist(err) {
@@ -122,7 +128,6 @@ func (t *Trash) moveOne(item api.TrashItem) error {
 			}
 		}
 	}
-	return nil
 }
 
 // Purge elimina definitivamente i file rimasti nel cestino oltre la ritenzione.
@@ -158,6 +163,11 @@ func (t *Trash) Purge(jobID int) (string, error) {
 			// ci fosse, e ci si e' arrivati.
 			if err := t.client.CompletePurge(item.TrashID, "purged", "eliminato definitivamente"); err != nil {
 				return "", err
+			}
+			// Ora che il file non c'e' piu' se ne va anche l'anteprima, che
+			// era rimasta apposta per far vedere nel cestino cosa c'era.
+			if item.MediaID > 0 {
+				t.removeThumbs([]int{item.MediaID})
 			}
 			removed++
 			freed += item.FileSize
