@@ -77,6 +77,12 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 	others := make([]api.OtherFile, 0, s.cfg.BatchSize)
 	total := 0
 	totalOthers := 0
+	// Soglia del progresso, non del batch: il batch e' 100, e su 338.000 file
+	// una riga per batch sarebbero dodici al secondo. Una ogni 5.000 da una
+	// riga ogni quattro secondi, che e' abbastanza per vedere che si muove
+	// senza rendere il log illeggibile.
+	const progressEvery = 5000
+	logged := 0
 
 	flush := func() error {
 		if len(batch) == 0 {
@@ -87,6 +93,16 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 		}
 		total += len(batch)
 		batch = batch[:0]
+
+		// Senza questa riga lo scan tace per minuti e non si distingue un job
+		// lento da un job bloccato -- che e' esattamente la domanda che ci si
+		// fa guardando i log di un pod.
+		if total-logged >= progressEvery {
+			logged = total
+			elapsed := time.Since(startedAt).Seconds()
+			s.log.Info("scansione in corso", "root", root.Name, "media", total,
+				"altri_file", totalOthers, "al_secondo", int(float64(total)/elapsed))
+		}
 		return s.client.Heartbeat(jobID)
 	}
 

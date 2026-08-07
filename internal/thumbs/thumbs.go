@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "image/gif"
 	_ "image/jpeg"
@@ -58,6 +59,7 @@ func New(cfg config.Config, client *api.Client, log *slog.Logger) *Thumbnailer {
 // crash senza bisogno di alcun checkpoint.
 func (t *Thumbnailer) Run(jobID int) (string, error) {
 	done, failed, skipped, moved := 0, 0, 0, 0
+	startedAt := time.Now()
 
 	for {
 		pending, err := t.client.GetPending("thumb", t.cfg.BatchSize)
@@ -104,6 +106,15 @@ func (t *Thumbnailer) Run(jobID int) (string, error) {
 				return "", fmt.Errorf("riclassificazione: %w", err)
 			}
 		}
+		// Una riga per batch: su questo archivio e' circa una al minuto, e senza
+		// non si distingue un job lento da un job bloccato. E' il difetto che
+		// si sentiva di piu', perche' thumbs gira per giorni e finora nel log
+		// compariva solo quando falliva qualcosa.
+		elapsed := time.Since(startedAt).Minutes()
+		t.log.Info("anteprime in corso",
+			"generate", done, "non_supportate", skipped, "fallite", failed,
+			"spostate", moved, "al_minuto", int(float64(done)/max(elapsed, 0.01)))
+
 		// Un 409 qui dice che il job non e' piu' nostro: si smette subito.
 		// Continuare vorrebbe dire rifare il lavoro di un altro pod.
 		if err := t.client.Heartbeat(jobID); err != nil {
