@@ -87,8 +87,7 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 		}
 		total += len(batch)
 		batch = batch[:0]
-		s.client.Heartbeat(jobID)
-		return nil
+		return s.client.Heartbeat(jobID)
 	}
 
 	// I file non gestiti hanno una coda a parte: non entrano in media, quindi
@@ -102,8 +101,7 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 		}
 		totalOthers += len(others)
 		others = others[:0]
-		s.client.Heartbeat(jobID)
-		return nil
+		return s.client.Heartbeat(jobID)
 	}
 
 	// WalkDir e non Walk: WalkDir usa il tipo restituito da readdir ed evita una

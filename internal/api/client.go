@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -106,19 +107,35 @@ type ReconcileOutcome struct {
 	Missing int    `json:"missing"`
 }
 
+// ErrJobLost dice che l'API non riconosce piu' questo pod come titolare del
+// job: qualcuno lo ha chiuso a mano, o il reaper lo ha gia' recuperato.
+//
+// Chi lo riceve deve fermarsi. Il lavoro fatto e' comunque salvato -- ogni
+// blocco viene scritto in database appena finito -- quindi non si butta via
+// niente, mentre continuare significa duplicare il lavoro di un altro pod: il
+// 2026-08-07 e' costato quattro ore e mezza di thumbnail rigenerate due volte.
+var ErrJobLost = errors.New("job non piu' in carico a questo pod")
+
 func (c *Client) do(method, path string, body any, out any) error {
+	_, err := c.doStatus(method, path, body, out)
+	return err
+}
+
+// doStatus e' do() che riporta anche il codice HTTP. Serve al battito, che deve
+// distinguere il 409 -- "questo job non e' piu' tuo" -- da un errore di rete.
+func (c *Client) doStatus(method, path string, body any, out any) (int, error) {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		reader = bytes.NewReader(encoded)
 	}
 
 	req, err := http.NewRequest(method, c.baseURL+path, reader)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
@@ -127,24 +144,24 @@ func (c *Client) do(method, path string, body any, out any) error {
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer res.Body.Close()
 
 	payload, err := io.ReadAll(res.Body)
 	if err != nil {
-		return err
+		return res.StatusCode, err
 	}
 
 	// Il 409 del reconcile non e' un errore di trasporto: e' un rifiuto
 	// deliberato, e il chiamante deve poterne leggere il corpo.
 	if res.StatusCode >= 400 && res.StatusCode != http.StatusConflict {
-		return fmt.Errorf("%s %s: %s: %s", method, path, res.Status, string(payload))
+		return res.StatusCode, fmt.Errorf("%s %s: %s: %s", method, path, res.Status, string(payload))
 	}
 	if out != nil && len(payload) > 0 {
-		return json.Unmarshal(payload, out)
+		return res.StatusCode, json.Unmarshal(payload, out)
 	}
-	return nil
+	return res.StatusCode, nil
 }
 
 // ClaimJob prende in carico un job tra quelli che questo pod sa eseguire.
@@ -160,18 +177,22 @@ func (c *Client) ClaimJob(names []string) (*Job, error) {
 // Va mandato a ogni blocco di lavoro concluso: e' cio' che distingue, per chi
 // guarda da fuori, un job lento da un job il cui pod e' sparito.
 //
-// Un errore qui non e' fatale: il lavoro fatto e' comunque salvato, e il giro
-// dopo si riprende dalla coda in database.
-func (c *Client) Heartbeat(jobID int) {
+// Restituisce ErrJobLost se l'API risponde 409, cioe' se il job non risulta
+// piu' in esecuzione. Un errore di rete invece non e' fatale e non ferma niente:
+// il lavoro e' gia' salvato e il giro dopo si riprende dalla coda.
+func (c *Client) Heartbeat(jobID int) error {
 	if jobID <= 0 {
-		return
+		return nil
 	}
-	if err := c.do("POST", fmt.Sprintf("/api/internal/jobs/%d/heartbeat", jobID), nil, nil); err != nil {
-		// Il 409 dice che il job non risulta piu' in esecuzione: qualcuno lo ha
-		// chiuso a mano, o il reaper lo ha gia' recuperato. Si continua
-		// comunque: interrompere butterebbe via lavoro gia' fatto.
-		c.log.Warn("battito rifiutato", "job_id", jobID, "err", err)
+	status, err := c.doStatus("POST", fmt.Sprintf("/api/internal/jobs/%d/heartbeat", jobID), nil, nil)
+	if status == http.StatusConflict {
+		c.log.Warn("battito rifiutato: il job non e' piu' nostro", "job_id", jobID)
+		return ErrJobLost
 	}
+	if err != nil {
+		c.log.Warn("battito non riuscito", "job_id", jobID, "err", err)
+	}
+	return nil
 }
 
 func (c *Client) UpdateJob(jobID int, status, result string) error {

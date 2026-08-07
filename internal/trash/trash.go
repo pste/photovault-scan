@@ -71,7 +71,9 @@ func (t *Trash) Apply(jobID int) (string, error) {
 			progress = true
 		}
 
-		t.client.Heartbeat(jobID)
+		if err := t.client.Heartbeat(jobID); err != nil {
+			return "", err
+		}
 		if !progress {
 			break
 		}
@@ -160,7 +162,9 @@ func (t *Trash) Purge(jobID int) (string, error) {
 			removed++
 			freed += item.FileSize
 		}
-		t.client.Heartbeat(jobID)
+		if err := t.client.Heartbeat(jobID); err != nil {
+			return "", err
+		}
 	}
 
 	return fmt.Sprintf("%d eliminati (%.1f MB liberati), %d falliti",

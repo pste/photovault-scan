@@ -90,7 +90,11 @@ func (t *Thumbnailer) Run(jobID int) (string, error) {
 				return "", fmt.Errorf("riclassificazione: %w", err)
 			}
 		}
-		t.client.Heartbeat(jobID)
+		// Un 409 qui dice che il job non e' piu' nostro: si smette subito.
+		// Continuare vorrebbe dire rifare il lavoro di un altro pod.
+		if err := t.client.Heartbeat(jobID); err != nil {
+			return "", err
+		}
 	}
 
 	return fmt.Sprintf("%d generate, %d non supportate, %d fallite, %d spostate fra i file non gestiti",
