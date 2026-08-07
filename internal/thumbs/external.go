@@ -31,15 +31,33 @@ func (t *Thumbnailer) decodeVideo(path string) (image.Image, error) {
 		"-q:v", "3",
 		"-y", tmpPath,
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		// Sotto i 3 secondi il seek finisce oltre la fine del video: si
-		// ritenta dal primo fotogramma.
+	out, err := cmd.CombinedOutput()
+
+	// Sotto i 3 secondi il seek finisce oltre la fine del video e non esce
+	// nessun fotogramma. Non basta guardare il codice di uscita: in questo caso
+	// ffmpeg esce **0** e si limita a non scrivere niente -- verificato su un
+	// .MOV da 2,6 secondi. Fidandosi solo dell'errore si finiva a decodificare
+	// il file temporaneo vuoto, e il fallimento arrivava travestito da
+	// "image: unknown format", che di ffmpeg non parla nemmeno. Erano 586 video
+	// senza anteprima sull'archivio vero.
+	if err != nil || !hasContent(tmpPath) {
 		if fallbackErr := t.videoFirstFrame(path, tmpPath); fallbackErr != nil {
-			return nil, fmt.Errorf("ffmpeg: %v: %s", err, string(out))
+			return nil, fmt.Errorf("ffmpeg: %v: %s", fallbackErr, string(out))
+		}
+		if !hasContent(tmpPath) {
+			return nil, fmt.Errorf("ffmpeg: nessun fotogramma estratto: %s", string(out))
 		}
 	}
 
 	return decodeFile(tmpPath)
+}
+
+// hasContent dice se il file esiste e non e' vuoto. Un file assente e uno da
+// zero byte sono la stessa cosa per chi deve decodificarlo, e qui capitano
+// entrambi: os.CreateTemp lascia un file vuoto, ffmpeg puo' non crearlo affatto.
+func hasContent(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Size() > 0
 }
 
 func (t *Thumbnailer) videoFirstFrame(path, outPath string) error {
