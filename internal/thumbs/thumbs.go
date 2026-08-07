@@ -19,6 +19,20 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	// Import a vuoto: registrano il decoder in image.Decode, che sceglie da se'
+	// in base ai primi byte del file. Non c'e' altro da scrivere.
+	//
+	// Sono tre formati che l'archivio contiene davvero e che finivano in errore
+	// con "image: unknown format": 59 webp, 18 bmp e 3 tif. La dipendenza
+	// golang.org/x/image c'era gia' -- serviva al ridimensionamento -- quindi
+	// non si aggiunge niente all'immagine.
+	//
+	// Che siano solo decoder non e' un limite: le thumbnail si scrivono sempre
+	// in JPEG, quindi di un encoder webp o tiff non sapremmo che farcene.
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
+
 	"github.com/pste/photovault-scan/internal/api"
 	"github.com/pste/photovault-scan/internal/config"
 )
