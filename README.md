@@ -20,6 +20,12 @@ file (job `trashapply`).
 | `thumbs` | genera le thumbnail mancanti |
 | `trashapply` | sposta in `.photovault/trash/<yyyymmdd>/` i file che l'utente ha deciso di eliminare |
 | `trashpurge` | elimina davvero i file rimasti nel cestino oltre i giorni di ritenzione |
+| `livephoto` | riaccoppia foto e video delle Live Photo (una `UPDATE` nell'API, nessun lavoro sulla share) |
+
+`livephoto` non tocca la share: chiede all'API di ricalcolare gli accoppiamenti. Sta in questo
+pod perché deve girare **dopo** `thumbs`, che è l'unico a scrivere la durata dei video — e
+senza la durata una Live Photo non si distingue da un filmino con lo stesso nome. Viene
+accodato da solo alla fine di ogni `thumbs`.
 
 I due job del cestino stanno qui perché questo è l'unico pod con la share montata in
 scrittura. L'API si limita ad accodare il lavoro: è una garanzia strutturale che un bug
