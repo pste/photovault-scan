@@ -72,7 +72,16 @@ type probeOutput struct {
 // videoMeta ricava durata, dimensioni e data di creazione con una sola
 // invocazione di ffprobe. Non e' mai fatale: un video illeggibile resta in
 // archivio con i soli dati del filesystem.
-func videoMeta(meta *api.MediaMeta, path string, log *slog.Logger) {
+//
+// Restituisce se il file contiene davvero una traccia video. Non e' una
+// domanda oziosa: WhatsApp salva le note vocali in .3gp, che e' un contenitore
+// video a tutti gli effetti e sta nell'allowlist perche' i telefoni vecchi ci
+// giravano i filmati veri. Dal nome non si distinguono; da ffprobe si'.
+//
+// In dubbio si risponde "sì": un ffprobe fallito o illeggibile non e' una
+// prova che la traccia video non ci sia, e sulla base di un dubbio non si
+// sposta un file fuori dalla libreria.
+func videoMeta(meta *api.MediaMeta, path string, log *slog.Logger) bool {
 	cmd := exec.Command("ffprobe",
 		"-v", "quiet",
 		"-print_format", "json",
@@ -83,21 +92,26 @@ func videoMeta(meta *api.MediaMeta, path string, log *slog.Logger) {
 	out, err := cmd.Output()
 	if err != nil {
 		log.Warn("ffprobe fallito", "path", path, "err", err)
-		return
+		return true
 	}
 
 	var probe probeOutput
 	if err := json.Unmarshal(out, &probe); err != nil {
 		log.Warn("output di ffprobe illeggibile", "path", path, "err", err)
-		return
+		return true
 	}
 
 	if seconds, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil && seconds > 0 {
 		meta.DurationS = &seconds
 	}
 
+	hasVideo := false
 	for _, stream := range probe.Streams {
-		if stream.CodecType == "video" && stream.Width > 0 {
+		if stream.CodecType != "video" {
+			continue
+		}
+		hasVideo = true
+		if stream.Width > 0 {
 			width, height := stream.Width, stream.Height
 			meta.Width = &width
 			meta.Height = &height
@@ -112,4 +126,6 @@ func videoMeta(meta *api.MediaMeta, path string, log *slog.Logger) {
 			}
 		}
 	}
+
+	return hasVideo
 }

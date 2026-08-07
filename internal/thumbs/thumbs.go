@@ -7,6 +7,7 @@
 package thumbs
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"log/slog"
@@ -24,6 +25,10 @@ import (
 
 const privateDir = ".photovault"
 
+// statusNotMedia non e' uno stato che finisce in database: e' il modo in cui
+// process() dice a Run() che questa riga non va aggiornata ma spostata.
+const statusNotMedia = "not-media"
+
 type Thumbnailer struct {
 	cfg    config.Config
 	client *api.Client
@@ -38,7 +43,7 @@ func New(cfg config.Config, client *api.Client, log *slog.Logger) *Thumbnailer {
 // La coda e' la colonna thumb_status, quindi il lavoro riprende da solo dopo un
 // crash senza bisogno di alcun checkpoint.
 func (t *Thumbnailer) Run(jobID int) (string, error) {
-	done, failed, skipped := 0, 0, 0
+	done, failed, skipped, moved := 0, 0, 0, 0
 
 	for {
 		pending, err := t.client.GetPending("thumb", t.cfg.BatchSize)
@@ -50,8 +55,17 @@ func (t *Thumbnailer) Run(jobID int) (string, error) {
 		}
 
 		results := make([]api.ThumbResult, 0, len(pending))
+		notMedia := make([]int, 0)
 		for _, item := range pending {
 			result := t.process(item)
+			// Chi va riclassificato resta fuori dai risultati: la sua riga in
+			// media sta per sparire, e aggiornarla prima di cancellarla
+			// sarebbe lavoro buttato.
+			if result.ThumbStatus == statusNotMedia {
+				notMedia = append(notMedia, item.MediaID)
+				moved++
+				continue
+			}
 			results = append(results, result)
 			switch result.ThumbStatus {
 			case "done":
@@ -63,13 +77,24 @@ func (t *Thumbnailer) Run(jobID int) (string, error) {
 			}
 		}
 
-		if err := t.client.SendThumbs(results); err != nil {
-			return "", fmt.Errorf("invio dei risultati: %w", err)
+		if len(results) > 0 {
+			if err := t.client.SendThumbs(results); err != nil {
+				return "", fmt.Errorf("invio dei risultati: %w", err)
+			}
+		}
+		// Un errore qui e' fatale e deve esserlo: se la riclassificazione non
+		// passa, quelle righe restano 'pending' e il giro dopo la coda le
+		// ripropone identiche -- cioe' un ciclo infinito.
+		if len(notMedia) > 0 {
+			if err := t.client.SendNotMedia(notMedia); err != nil {
+				return "", fmt.Errorf("riclassificazione: %w", err)
+			}
 		}
 		t.client.Heartbeat(jobID)
 	}
 
-	return fmt.Sprintf("%d generate, %d non supportate, %d fallite", done, skipped, failed), nil
+	return fmt.Sprintf("%d generate, %d non supportate, %d fallite, %d spostate fra i file non gestiti",
+		done, skipped, failed, moved), nil
 }
 
 // shard distribuisce le thumbnail su 256 sottocartelle: CIFS degrada male oltre
@@ -88,6 +113,12 @@ func (t *Thumbnailer) sourcePath(item api.PendingMedia) string {
 	return filepath.Join(t.cfg.MediaRoot, item.RelPath, item.FolderPath, item.FileName)
 }
 
+// errNotMedia dice che il file non e' quello che l'estensione prometteva, e che
+// quindi non va riprovato: va tolto dalla libreria e messo fra i file non
+// gestiti. Ritentarlo all'infinito sarebbe l'unica alternativa, e non porta a
+// niente perche' la traccia video non comparira' domani.
+var errNotMedia = errors.New("nessuna traccia video: non e' un filmato")
+
 func (t *Thumbnailer) process(item api.PendingMedia) api.ThumbResult {
 	result := api.ThumbResult{MediaID: item.MediaID, ThumbStatus: "error"}
 
@@ -96,7 +127,11 @@ func (t *Thumbnailer) process(item api.PendingMedia) api.ThumbResult {
 	// anteprima, ma la sua data di scatto e le sue coordinate sono valide.
 	src, err := t.decode(item, &result.MediaMeta)
 	if err != nil {
-		if strings.Contains(err.Error(), "non supportato") {
+		if errors.Is(err, errNotMedia) {
+			result.ThumbStatus = statusNotMedia
+			t.log.Info("non e' un filmato, passa fra i file non gestiti",
+				"media_id", item.MediaID, "file", item.FileName)
+		} else if strings.Contains(err.Error(), "non supportato") {
 			result.ThumbStatus = "unsupported"
 			t.log.Debug("formato non supportato", "media_id", item.MediaID, "file", item.FileName)
 		} else {
@@ -142,7 +177,9 @@ func (t *Thumbnailer) decode(item api.PendingMedia, meta *api.MediaMeta) (image.
 	// I video non hanno EXIF: durata, dimensioni e data vengono da ffprobe, e
 	// il fotogramma da ffmpeg. Nessuna delle due passa da un file aperto qui.
 	if item.MediaKind == "video" {
-		videoMeta(meta, path, t.log)
+		if !videoMeta(meta, path, t.log) {
+			return nil, errNotMedia
+		}
 		return t.decodeVideo(path)
 	}
 

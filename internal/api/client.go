@@ -250,6 +250,13 @@ func (c *Client) SendThumbs(items []ThumbResult) error {
 	return c.do("POST", "/api/internal/thumb/batch", map[string]any{"items": items}, nil)
 }
 
+// SendNotMedia sposta fra i file non gestiti dei media che si sono rivelati
+// altro: la riga esce da media ed entra in other_files, dove l'utente puo'
+// vederla e cestinarla come qualsiasi file estraneo.
+func (c *Client) SendNotMedia(mediaIDs []int) error {
+	return c.do("POST", "/api/internal/media/not-media", map[string]any{"media_ids": mediaIDs}, nil)
+}
+
 // TrashItem e' un file -- o un'intera cartella -- da spostare nel cestino, o da
 // eliminare se scaduto. I percorsi sono relativi: il mount e' una proprieta'
 // del pod.
