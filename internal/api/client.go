@@ -271,6 +271,20 @@ func (c *Client) SendThumbs(items []ThumbResult) error {
 	return c.do("POST", "/api/internal/thumb/batch", map[string]any{"items": items}, nil)
 }
 
+// PairLivePhotos chiede all'API di ricalcolare gli accoppiamenti foto/video
+// delle Live Photo. Il pod non fa il lavoro: lo fa una UPDATE nell'API, perche'
+// e' una relazione fra righe e vive dove vive lo schema. Il pod la richiede
+// perche' e' l'unico a sapere quando la durata dei video e' stata scritta.
+type LivePhotoResult struct {
+	Coppie int `json:"coppie"`
+}
+
+func (c *Client) PairLivePhotos() (int, error) {
+	var out LivePhotoResult
+	err := c.do("POST", "/api/internal/livephotos/pair", nil, &out)
+	return out.Coppie, err
+}
+
 // SendNotMedia sposta fra i file non gestiti dei media che si sono rivelati
 // altro: la riga esce da media ed entra in other_files, dove l'utente puo'
 // vederla e cestinarla come qualsiasi file estraneo.

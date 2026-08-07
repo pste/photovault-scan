@@ -6,6 +6,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -39,6 +40,17 @@ func main() {
 		"thumbs":     thumbnailer.Run,
 		"trashapply": bin.Apply,
 		"trashpurge": bin.Purge,
+		// Non fa lavoro sulla share: chiede all'API di ricalcolare gli
+		// accoppiamenti delle Live Photo. Sta qui e non altrove perche' deve
+		// girare dopo thumbs, che e' l'unico a scrivere la durata dei video, e
+		// perche' cosi' compare fra i job come tutto il resto.
+		"livephoto": func(int) (string, error) {
+			coppie, err := client.PairLivePhotos()
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%d coppie foto/video riconosciute", coppie), nil
+		},
 	}
 
 	names := make([]string, 0, len(handlers))
@@ -103,6 +115,15 @@ func main() {
 		if job.Name == "scan" && status == "done" {
 			if err := client.EnqueueJob("thumbs", time.Now()); err != nil {
 				log.Error("accodamento thumbs fallito", "err", err)
+			}
+		}
+
+		// Le durate dei video le ha appena scritte thumbs: prima di adesso
+		// l'accoppiamento non avrebbe potuto distinguere una Live Photo da un
+		// filmino con lo stesso nome.
+		if job.Name == "thumbs" && status == "done" {
+			if err := client.EnqueueJob("livephoto", time.Now()); err != nil {
+				log.Error("accodamento livephoto fallito", "err", err)
 			}
 		}
 
