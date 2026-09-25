@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -39,6 +41,19 @@ import (
 )
 
 const privateDir = ".photovault"
+
+// maxPixels e' la dimensione oltre la quale un'immagine non si decodifica.
+//
+// La decodifica alloca l'intera immagine in memoria prima che si possa fare
+// qualsiasi altra cosa: un PNG da 30.000 x 30.000 sono gigabyte, e il pod
+// verrebbe ucciso per memoria prima che GOMEMLIMIT possa intervenire. Peggio,
+// il media resterebbe 'pending' col media_id piu' basso, e ogni corsa
+// successiva ripartirebbe proprio da li' per morire allo stesso modo.
+//
+// 64 megapixel stanno larghi sopra qualsiasi fotocamera dell'archivio, e anche
+// nel caso peggiore -- un PNG a 16 bit, 8 byte per pixel -- restano sotto il
+// limite di memoria del pod.
+const maxPixels = 64_000_000
 
 // statusNotMedia non e' uno stato che finisce in database: e' il modo in cui
 // process() dice a Run() che questa riga non va aggiornata ma spostata.
@@ -148,8 +163,19 @@ func (t *Thumbnailer) sourcePath(item api.PendingMedia) string {
 // niente perche' la traccia video non comparira' domani.
 var errNotMedia = errors.New("nessuna traccia video: non e' un filmato")
 
-func (t *Thumbnailer) process(item api.PendingMedia) api.ThumbResult {
-	result := api.ThumbResult{MediaID: item.MediaID, ThumbStatus: "error"}
+func (t *Thumbnailer) process(item api.PendingMedia) (result api.ThumbResult) {
+	result = api.ThumbResult{MediaID: item.MediaID, ThumbStatus: "error"}
+
+	// Un panic in un decoder -- su un file corrotto succede -- abbatteva il
+	// pod, e il file restava in testa alla coda per la corsa successiva. Qui
+	// diventa l'errore di un file solo.
+	defer func() {
+		if r := recover(); r != nil {
+			t.log.Error("panic durante l'anteprima", "media_id", item.MediaID, "file", item.FileName,
+				"panic", r, "stack", string(debug.Stack()))
+			result = api.ThumbResult{MediaID: item.MediaID, ThumbStatus: "error"}
+		}
+	}()
 
 	// I metadati escono dalla stessa apertura della decodifica, e vengono
 	// restituiti anche quando la thumbnail fallisce: un RAW resta senza
@@ -231,8 +257,7 @@ func (t *Thumbnailer) decode(item api.PendingMedia, meta *api.MediaMeta) (image.
 		// gia' presente nel file senza demosaicizzare.
 		return nil, fmt.Errorf("formato non supportato: raw")
 	default:
-		img, _, err := image.Decode(file)
-		return img, err
+		return decodeLimited(file)
 	}
 }
 
@@ -243,9 +268,25 @@ func decodeFile(path string) (image.Image, error) {
 	}
 	defer file.Close()
 
-	img, _, err := image.Decode(file)
+	return decodeLimited(file)
+}
+
+// decodeLimited legge prima le sole dimensioni, che stanno nell'intestazione,
+// e decodifica l'immagine solo se sta sotto maxPixels.
+func decodeLimited(file io.ReadSeeker) (image.Image, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	cfg, _, err := image.DecodeConfig(file)
 	if err != nil {
 		return nil, err
 	}
-	return img, nil
+	if cfg.Width*cfg.Height > maxPixels {
+		return nil, fmt.Errorf("immagine troppo grande: %d x %d", cfg.Width, cfg.Height)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	img, _, err := image.Decode(file)
+	return img, err
 }
