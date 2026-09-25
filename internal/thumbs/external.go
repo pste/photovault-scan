@@ -18,6 +18,9 @@ import (
 // costante solo perche' i test la accorciano.
 var toolTimeout = 2 * time.Minute
 
+// ffmpegThreads e' allineato al limite di CPU del CronJob notturno.
+const ffmpegThreads = "2"
+
 // runTool esegue uno strumento esterno con un tempo massimo.
 //
 // Senza, un file corrotto o una lettura appesa sulla share bloccano il
@@ -59,9 +62,14 @@ func (t *Thumbnailer) decodeVideo(path string) (image.Image, error) {
 	tmp.Close()
 	defer os.Remove(tmpPath)
 
+	// -threads prima di -i limita il decoder: di default ffmpeg apre un thread
+	// per core del nodo, cioe' otto, contro i due core di limite del pod, e ogni
+	// thread di un decoder HEVC 4K porta con se' i suoi buffer. ffmpeg sta nel
+	// cgroup del pod ma fuori da GOMEMLIMIT, che vale solo per Go.
 	_, out, err := runTool("ffmpeg",
 		"-nostdin",
 		"-loglevel", "error",
+		"-threads", ffmpegThreads,
 		"-ss", "3",
 		"-i", path,
 		"-frames:v", "1",
@@ -100,6 +108,7 @@ func (t *Thumbnailer) videoFirstFrame(path, outPath string) error {
 	_, out, err := runTool("ffmpeg",
 		"-nostdin",
 		"-loglevel", "error",
+		"-threads", ffmpegThreads,
 		"-i", path,
 		"-frames:v", "1",
 		"-q:v", "3",
