@@ -195,21 +195,25 @@ func (t *Thumbnailer) process(item api.PendingMedia) (result api.ThumbResult) {
 		return result
 	}
 
-	// L'orientamento EXIF va applicato PRIMA di ridimensionare: dimenticarlo
-	// significa meta' delle foto verticali storte nella griglia, che e' il bug
-	// piu' visibile che ci sia. Arriva dal file appena letto e non dal
-	// database, quindi questo job non dipende da cosa sapeva lo scan.
-	src = applyOrientation(src, result.Orientation)
+	// L'orientamento EXIF va applicato: dimenticarlo significa meta' delle
+	// foto verticali storte nella griglia, che e' il bug piu' visibile che ci
+	// sia. Arriva dal file appena letto e non dal database, quindi questo job
+	// non dipende da cosa sapeva lo scan. Dove applicarlo lo spiega render.
+	medium, small := render(src, result.Orientation, t.cfg.ThumbMedium, t.cfg.ThumbSmall)
 
+	// Le dimensioni salvate sono quelle che l'utente vede: raddrizzate.
 	bounds := src.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
+	if result.Orientation != nil && *result.Orientation >= 5 && *result.Orientation <= 8 {
+		width, height = height, width
+	}
 
 	// Una sola decodifica produce entrambe le dimensioni.
-	if err := t.write(src, t.thumbPath(item.MediaID, "m"), t.cfg.ThumbMedium); err != nil {
+	if err := save(medium, t.thumbPath(item.MediaID, "m")); err != nil {
 		t.log.Warn("scrittura thumbnail m fallita", "media_id", item.MediaID, "err", err)
 		return result
 	}
-	if err := t.write(src, t.thumbPath(item.MediaID, "s"), t.cfg.ThumbSmall); err != nil {
+	if err := save(small, t.thumbPath(item.MediaID, "s")); err != nil {
 		t.log.Warn("scrittura thumbnail s fallita", "media_id", item.MediaID, "err", err)
 		return result
 	}

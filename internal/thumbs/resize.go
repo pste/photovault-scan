@@ -14,15 +14,12 @@ import (
 // image/jpeg sta nella libreria standard e non costa nulla.
 const jpegQuality = 82
 
-// write ridimensiona mantenendo le proporzioni e scrive un JPEG.
-// Se l'immagine e' gia' piu' piccola del lato richiesto non viene ingrandita:
-// ingrandire produce solo file piu' grandi senza aggiungere dettaglio.
-func (t *Thumbnailer) write(src image.Image, path string, longEdge int) error {
+// resize riduce mantenendo le proporzioni, con il lato lungo a longEdge.
+// Se l'immagine e' gia' piu' piccola non viene ingrandita: ingrandire produce
+// solo file piu' grandi senza aggiungere dettaglio.
+func resize(src image.Image, longEdge int) image.Image {
 	bounds := src.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
-	if width == 0 || height == 0 {
-		return os.ErrInvalid
-	}
 
 	targetW, targetH := width, height
 	if width > longEdge || height > longEdge {
@@ -45,7 +42,14 @@ func (t *Thumbnailer) write(src image.Image, path string, longEdge int) error {
 	// CatmullRom: piu' lento di ApproxBiLinear ma nettamente migliore sulle
 	// riduzioni forti, che e' esattamente il caso di una thumbnail.
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+	return dst
+}
 
+// save scrive un JPEG.
+func save(img image.Image, path string) error {
+	if img.Bounds().Dx() == 0 || img.Bounds().Dy() == 0 {
+		return os.ErrInvalid
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -59,7 +63,7 @@ func (t *Thumbnailer) write(src image.Image, path string, longEdge int) error {
 		return err
 	}
 
-	if err := jpeg.Encode(file, dst, &jpeg.Options{Quality: jpegQuality}); err != nil {
+	if err := jpeg.Encode(file, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
 		file.Close()
 		os.Remove(tmp)
 		return err
@@ -70,6 +74,24 @@ func (t *Thumbnailer) write(src image.Image, path string, longEdge int) error {
 	}
 
 	return os.Rename(tmp, path)
+}
+
+// render produce le due anteprime da un'immagine decodificata.
+//
+// L'orientamento si applica DOPO la prima riduzione e non prima: gli otto casi
+// sono rotazioni e specchiature esatte, che commutano col ridimensionamento
+// (il lato lungo e' lo stesso comunque la si giri). Ruotare l'immagine piena
+// voleva dire, su una 24 MP verticale -- cioe' ogni foto da telefono tenuta in
+// verticale -- 24 milioni di At/Set e una copia RGBA da 96 MB accanto
+// all'originale ancora in memoria. A 1280 px sono 1,6 milioni e 6 MB.
+//
+// La piccola si ricava dalla media, gia' raddrizzata: da 1280 a 320 px la
+// differenza di qualita' non si vede, e si evita un secondo passaggio
+// sull'immagine piena.
+func render(src image.Image, orientation *int, mediumEdge, smallEdge int) (medium, small image.Image) {
+	medium = applyOrientation(resize(src, mediumEdge), orientation)
+	small = resize(medium, smallEdge)
+	return medium, small
 }
 
 // applyOrientation raddrizza l'immagine secondo il tag EXIF Orientation.
