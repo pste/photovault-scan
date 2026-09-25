@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pste/photovault-scan/internal/api"
 	"github.com/pste/photovault-scan/internal/config"
@@ -33,6 +34,47 @@ func (t *Trash) thumbPath(mediaID int, size string) string {
 	shard := fmt.Sprintf("%02x", mediaID%256)
 	name := fmt.Sprintf("%d_%s.jpg", mediaID, size)
 	return filepath.Join(t.cfg.MediaRoot, privateDir, "thumbs", shard, name)
+}
+
+// within dice se path sta strettamente dentro base: non base stessa, non fuori.
+func within(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// paths ricava sorgente e destinazione di una riga di cestino, e rifiuta tutto
+// quello che non ha la forma attesa.
+//
+// I percorsi arrivano dall'API, e questo e' l'unico pod che puo' spostare e
+// cancellare: la garanzia scritta in cima al package vale solo se un dato
+// sbagliato non puo' trasformarsi in una RemoveAll fuori posto. Un trash_path
+// vuoto, o fatto di "..", o un rel_path che esce da MEDIA_ROOT, farebbero
+// cancellare al purge una root intera o qualcosa fuori dalla share.
+//
+// La destinazione deve stare almeno due livelli sotto il cestino
+// (.photovault/trash/<data>/<nome>): un livello solo sarebbe la cartella di un
+// giorno intero.
+func (t *Trash) paths(item api.TrashItem) (src, dst string, err error) {
+	root := filepath.Join(t.cfg.MediaRoot, item.RelPath)
+	if root != filepath.Clean(t.cfg.MediaRoot) && !within(t.cfg.MediaRoot, root) {
+		return "", "", fmt.Errorf("rel_path fuori da MEDIA_ROOT: %q", item.RelPath)
+	}
+
+	bin := filepath.Join(root, privateDir, "trash")
+	dst = filepath.Join(root, item.TrashPath)
+	rel, relErr := filepath.Rel(bin, dst)
+	if !within(bin, dst) || relErr != nil || !strings.Contains(rel, string(filepath.Separator)) {
+		return "", "", fmt.Errorf("trash_path fuori dal cestino: %q", item.TrashPath)
+	}
+
+	src = filepath.Join(root, item.OriginalPath)
+	if !within(root, src) || within(filepath.Join(root, privateDir), src) {
+		return "", "", fmt.Errorf("original_path non valido: %q", item.OriginalPath)
+	}
+	return src, dst, nil
 }
 
 // Apply sposta i file nel cestino.
@@ -83,8 +125,10 @@ func (t *Trash) Apply(jobID int) (string, error) {
 }
 
 func (t *Trash) moveOne(item api.TrashItem) error {
-	src := filepath.Join(t.cfg.MediaRoot, item.RelPath, item.OriginalPath)
-	dst := filepath.Join(t.cfg.MediaRoot, item.RelPath, item.TrashPath)
+	src, dst, err := t.paths(item)
+	if err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -146,11 +190,13 @@ func (t *Trash) Purge(jobID int) (string, error) {
 		}
 
 		for _, item := range expired {
-			path := filepath.Join(t.cfg.MediaRoot, item.RelPath, item.TrashPath)
 			// RemoveAll e non Remove: una riga di cartella punta a una
 			// directory, che a questo punto e' scaduta con tutto il contenuto.
 			// Su un file si comporta esattamente come Remove.
-			err := os.RemoveAll(path)
+			_, path, err := t.paths(item)
+			if err == nil {
+				err = os.RemoveAll(path)
+			}
 			if err != nil && !os.IsNotExist(err) {
 				t.log.Warn("eliminazione fallita", "trash_id", item.TrashID, "err", err)
 				if reportErr := t.client.CompletePurge(item.TrashID, "error", err.Error()); reportErr != nil {
