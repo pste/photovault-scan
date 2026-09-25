@@ -44,36 +44,55 @@ func within(base, path string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// paths ricava sorgente e destinazione di una riga di cestino, e rifiuta tutto
-// quello che non ha la forma attesa.
-//
 // I percorsi arrivano dall'API, e questo e' l'unico pod che puo' spostare e
 // cancellare: la garanzia scritta in cima al package vale solo se un dato
 // sbagliato non puo' trasformarsi in una RemoveAll fuori posto. Un trash_path
 // vuoto, o fatto di "..", o un rel_path che esce da MEDIA_ROOT, farebbero
 // cancellare al purge una root intera o qualcosa fuori dalla share.
 //
-// La destinazione deve stare almeno due livelli sotto il cestino
-// (.photovault/trash/<data>/<nome>): un livello solo sarebbe la cartella di un
-// giorno intero.
-func (t *Trash) paths(item api.TrashItem) (src, dst string, err error) {
+// Le due funzioni sono separate perche' le due code non portano gli stessi
+// campi: la riga da svuotare ha solo rel_path e trash_path. Con un controllo
+// unico il purge rifiutava ogni riga per un original_path che non gli serve e
+// che l'API non manda -- 774 file, il 2026-09-25.
+
+// rootOf restituisce la cartella della root, se sta dentro MEDIA_ROOT.
+func (t *Trash) rootOf(item api.TrashItem) (string, error) {
 	root := filepath.Join(t.cfg.MediaRoot, item.RelPath)
 	if root != filepath.Clean(t.cfg.MediaRoot) && !within(t.cfg.MediaRoot, root) {
-		return "", "", fmt.Errorf("rel_path fuori da MEDIA_ROOT: %q", item.RelPath)
+		return "", fmt.Errorf("rel_path fuori da MEDIA_ROOT: %q", item.RelPath)
 	}
+	return root, nil
+}
 
+// trashTarget e' il percorso nel cestino. Deve stare almeno due livelli sotto
+// .photovault/trash/ (<data>/<nome>): un livello solo sarebbe la cartella di
+// un giorno intero.
+func (t *Trash) trashTarget(item api.TrashItem) (string, error) {
+	root, err := t.rootOf(item)
+	if err != nil {
+		return "", err
+	}
 	bin := filepath.Join(root, layout.PrivateDir, "trash")
-	dst = filepath.Join(root, item.TrashPath)
+	dst := filepath.Join(root, item.TrashPath)
 	rel, relErr := filepath.Rel(bin, dst)
 	if !within(bin, dst) || relErr != nil || !strings.Contains(rel, string(filepath.Separator)) {
-		return "", "", fmt.Errorf("trash_path fuori dal cestino: %q", item.TrashPath)
+		return "", fmt.Errorf("trash_path fuori dal cestino: %q", item.TrashPath)
 	}
+	return dst, nil
+}
 
-	src = filepath.Join(root, item.OriginalPath)
-	if !within(root, src) || within(filepath.Join(root, layout.PrivateDir), src) {
-		return "", "", fmt.Errorf("original_path non valido: %q", item.OriginalPath)
+// source e' il file o la cartella da spostare: dentro la root, fuori da
+// .photovault/. Serve solo ad Apply.
+func (t *Trash) source(item api.TrashItem) (string, error) {
+	root, err := t.rootOf(item)
+	if err != nil {
+		return "", err
 	}
-	return src, dst, nil
+	src := filepath.Join(root, item.OriginalPath)
+	if !within(root, src) || within(filepath.Join(root, layout.PrivateDir), src) {
+		return "", fmt.Errorf("original_path non valido: %q", item.OriginalPath)
+	}
+	return src, nil
 }
 
 // Apply sposta i file nel cestino.
@@ -124,7 +143,11 @@ func (t *Trash) Apply(jobID int) (string, error) {
 }
 
 func (t *Trash) moveOne(item api.TrashItem) error {
-	src, dst, err := t.paths(item)
+	src, err := t.source(item)
+	if err != nil {
+		return err
+	}
+	dst, err := t.trashTarget(item)
 	if err != nil {
 		return err
 	}
@@ -203,7 +226,7 @@ func (t *Trash) Purge(jobID int) (string, error) {
 			// RemoveAll e non Remove: una riga di cartella punta a una
 			// directory, che a questo punto e' scaduta con tutto il contenuto.
 			// Su un file si comporta esattamente come Remove.
-			_, path, err := t.paths(item)
+			path, err := t.trashTarget(item)
 			if err == nil {
 				err = os.RemoveAll(path)
 			}

@@ -12,35 +12,60 @@ import (
 func TestPaths(t *testing.T) {
 	tr := &Trash{cfg: config.Config{MediaRoot: "/data/photos"}}
 
+	// Una riga da spostare, com'e' in coda per trashapply.
 	valid := []api.TrashItem{
 		{RelPath: "", OriginalPath: "2019/a.jpg", TrashPath: ".photovault/trash/20260925/7_a.jpg"},
 		{RelPath: "FOTO", OriginalPath: "2019_01/", TrashPath: ".photovault/trash/20260925/3_2019_01"},
 	}
 	for _, item := range valid {
-		if _, _, err := tr.paths(item); err != nil {
-			t.Errorf("%+v: rifiutato: %v", item, err)
+		if _, err := tr.source(item); err != nil {
+			t.Errorf("%+v: sorgente rifiutata: %v", item, err)
+		}
+		if _, err := tr.trashTarget(item); err != nil {
+			t.Errorf("%+v: destinazione rifiutata: %v", item, err)
 		}
 	}
 
 	// Ognuno di questi, al purge, avrebbe cancellato qualcosa che non e' nel
 	// cestino: la root, la cartella di un giorno intero, o fuori dalla share.
-	invalid := []api.TrashItem{
-		{OriginalPath: "a.jpg", TrashPath: ""},
-		{OriginalPath: "a.jpg", TrashPath: "."},
-		{OriginalPath: "a.jpg", TrashPath: ".photovault/trash"},
-		{OriginalPath: "a.jpg", TrashPath: ".photovault/trash/20260925"},
-		{OriginalPath: "a.jpg", TrashPath: ".photovault/trash/../thumbs/x"},
-		{OriginalPath: "a.jpg", TrashPath: ".photovault/trash/20260925/../../../2019"},
-		{RelPath: "..", OriginalPath: "a.jpg", TrashPath: ".photovault/trash/20260925/1_a.jpg"},
-		{RelPath: "../../etc", OriginalPath: "a.jpg", TrashPath: ".photovault/trash/20260925/1_a.jpg"},
-		{OriginalPath: "", TrashPath: ".photovault/trash/20260925/1_a"},
-		{OriginalPath: "../fuori.jpg", TrashPath: ".photovault/trash/20260925/1_a"},
-		{OriginalPath: ".photovault/thumbs", TrashPath: ".photovault/trash/20260925/1_a"},
+	badTarget := []api.TrashItem{
+		{TrashPath: ""},
+		{TrashPath: "."},
+		{TrashPath: ".photovault/trash"},
+		{TrashPath: ".photovault/trash/20260925"},
+		{TrashPath: ".photovault/trash/../thumbs/x"},
+		{TrashPath: ".photovault/trash/20260925/../../../2019"},
+		{RelPath: "..", TrashPath: ".photovault/trash/20260925/1_a.jpg"},
+		{RelPath: "../../etc", TrashPath: ".photovault/trash/20260925/1_a.jpg"},
 	}
-	for _, item := range invalid {
-		if _, _, err := tr.paths(item); err == nil {
-			t.Errorf("%+v: accettato", item)
+	for _, item := range badTarget {
+		if _, err := tr.trashTarget(item); err == nil {
+			t.Errorf("%+v: destinazione accettata", item)
 		}
+	}
+
+	badSource := []api.TrashItem{
+		{OriginalPath: ""},
+		{OriginalPath: "../fuori.jpg"},
+		{OriginalPath: ".photovault/thumbs"},
+		{RelPath: "..", OriginalPath: "a.jpg"},
+	}
+	for _, item := range badSource {
+		if _, err := tr.source(item); err == nil {
+			t.Errorf("%+v: sorgente accettata", item)
+		}
+	}
+}
+
+// La riga da svuotare come la manda davvero l'API (getExpiredTrash): niente
+// original_path, che al purge non serve. Il 2026-09-25 un controllo unico la
+// rifiutava, e 774 file scaduti sono rimasti nel cestino in stato 'error'.
+func TestPurgeAccettaLaRigaDellAPI(t *testing.T) {
+	tr := &Trash{cfg: config.Config{MediaRoot: "/data/photos"}}
+	item := api.TrashItem{TrashID: 1, MediaID: 1295, RelPath: "",
+		TrashPath: ".photovault/trash/20260806/1295_sognare-un-mostro-1.jpg"}
+	if _, err := tr.trashTarget(item); err != nil {
+		t.Fatalf("riga del purge rifiutata: %v", err)
 	}
 }
 
