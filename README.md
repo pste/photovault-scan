@@ -48,6 +48,11 @@ sveglierebbe puntuale, troverebbe la coda vuota e uscirebbe senza fare niente.
 L'accodamento è idempotente (l'API tiene un solo job `pending` per nome), quindi non fa danni
 se lo stesso job è già stato richiesto dalla UI.
 
+`JOBS` restringe i job che il pod accetta al claim (vuoto = tutti). Serve perché sul cluster
+due CronJob usano questa stessa immagine: quello dei 15 minuti accetta solo `trashapply` e
+`livephoto`, che non decodificano immagini, e così non può finire a generare anteprime
+accanto al notturno. Un nome sconosciuto fa uscire il pod con errore.
+
 ## Requisiti
 
 - La share montata in lettura-scrittura su `MEDIA_ROOT`
@@ -64,6 +69,7 @@ LOG_LEVEL=trace
 SCAN_WORKERS=3
 GOMEMLIMIT=800MiB
 ENQUEUE_ON_START=
+JOBS=
 ```
 
 `GOMEMLIMIT` è obbligatorio, non un'ottimizzazione: il garbage collector di Go non conosce i

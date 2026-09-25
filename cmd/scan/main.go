@@ -53,6 +53,22 @@ func main() {
 		},
 	}
 
+	// JOBS restringe l'elenco. Un nome sconosciuto e' un errore di
+	// configurazione, e va detto subito: ignorarlo lascerebbe il pod a
+	// prendere job che non dovrebbe, o a non prenderne nessuno, in silenzio.
+	if len(cfg.Jobs) > 0 {
+		allowed := make(map[string]func(int) (string, error), len(cfg.Jobs))
+		for _, name := range cfg.Jobs {
+			handler, ok := handlers[name]
+			if !ok {
+				log.Error("JOBS contiene un job che questo pod non sa eseguire", "name", name)
+				os.Exit(1)
+			}
+			allowed[name] = handler
+		}
+		handlers = allowed
+	}
+
 	names := make([]string, 0, len(handlers))
 	for name := range handlers {
 		names = append(names, name)

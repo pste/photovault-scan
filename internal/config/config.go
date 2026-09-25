@@ -27,6 +27,11 @@ type Config struct {
 	// L'accodamento e' idempotente (un solo job pending per nome), quindi
 	// non fa danni se l'utente lo ha gia' richiesto dalla UI.
 	EnqueueOnStart []string
+	// Job che questo pod accetta, separati da virgola; vuoto = tutti. Serve a
+	// dare a due CronJob con la stessa immagine due compiti diversi: quello
+	// dei 15 minuti prende solo i job leggeri, e cosi' non puo' finire a
+	// generare anteprime accanto al notturno.
+	Jobs []string
 }
 
 func env(key, fallback string) string {
@@ -84,5 +89,6 @@ func Load() Config {
 		RootName:       env("ROOT_NAME", "Foto"),
 		RootRelPath:    os.Getenv("ROOT_REL_PATH"),
 		EnqueueOnStart: envList("ENQUEUE_ON_START"),
+		Jobs:           envList("JOBS"),
 	}
 }
