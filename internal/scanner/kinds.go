@@ -1,6 +1,10 @@
 package scanner
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pste/photovault-scan/internal/layout"
+)
 
 // Allowlist, non blocklist: le blocklist perdono sempre contro .AAE, .XMP,
 // .THM, .LRV e compagnia. Quello che non e' qui dentro non entra in archivio.
@@ -34,7 +38,7 @@ var kinds = map[string]string{
 // Directory da saltare: la nostra area privata, i cestini e le cartelle di
 // servizio dei NAS, e qualunque directory nascosta.
 var skipDirs = map[string]bool{
-	".photovault":          true,
+	layout.PrivateDir:      true,
 	"@eaDir":               true,
 	"@Recycle":             true,
 	"#recycle":             true,

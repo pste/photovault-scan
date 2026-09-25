@@ -18,9 +18,8 @@ import (
 
 	"github.com/pste/photovault-scan/internal/api"
 	"github.com/pste/photovault-scan/internal/config"
+	"github.com/pste/photovault-scan/internal/layout"
 )
-
-const privateDir = ".photovault"
 
 type Trash struct {
 	cfg    config.Config
@@ -33,9 +32,7 @@ func New(cfg config.Config, client *api.Client, log *slog.Logger) *Trash {
 }
 
 func (t *Trash) thumbPath(mediaID int, size string) string {
-	shard := fmt.Sprintf("%02x", mediaID%256)
-	name := fmt.Sprintf("%d_%s.jpg", mediaID, size)
-	return filepath.Join(t.cfg.MediaRoot, privateDir, "thumbs", shard, name)
+	return layout.ThumbPath(t.cfg.MediaRoot, mediaID, size)
 }
 
 // within dice se path sta strettamente dentro base: non base stessa, non fuori.
@@ -65,7 +62,7 @@ func (t *Trash) paths(item api.TrashItem) (src, dst string, err error) {
 		return "", "", fmt.Errorf("rel_path fuori da MEDIA_ROOT: %q", item.RelPath)
 	}
 
-	bin := filepath.Join(root, privateDir, "trash")
+	bin := filepath.Join(root, layout.PrivateDir, "trash")
 	dst = filepath.Join(root, item.TrashPath)
 	rel, relErr := filepath.Rel(bin, dst)
 	if !within(bin, dst) || relErr != nil || !strings.Contains(rel, string(filepath.Separator)) {
@@ -73,7 +70,7 @@ func (t *Trash) paths(item api.TrashItem) (src, dst string, err error) {
 	}
 
 	src = filepath.Join(root, item.OriginalPath)
-	if !within(root, src) || within(filepath.Join(root, privateDir), src) {
+	if !within(root, src) || within(filepath.Join(root, layout.PrivateDir), src) {
 		return "", "", fmt.Errorf("original_path non valido: %q", item.OriginalPath)
 	}
 	return src, dst, nil

@@ -38,9 +38,8 @@ import (
 
 	"github.com/pste/photovault-scan/internal/api"
 	"github.com/pste/photovault-scan/internal/config"
+	"github.com/pste/photovault-scan/internal/layout"
 )
-
-const privateDir = ".photovault"
 
 // maxPixels e' la dimensione oltre la quale un'immagine non si decodifica.
 //
@@ -141,16 +140,8 @@ func (t *Thumbnailer) Run(jobID int) (string, error) {
 		done, skipped, failed, moved), nil
 }
 
-// shard distribuisce le thumbnail su 256 sottocartelle: CIFS degrada male oltre
-// qualche migliaio di file per directory, e due livelli di shard costerebbero
-// 65.000 mkdir per nulla.
-func shard(mediaID int) string {
-	return fmt.Sprintf("%02x", mediaID%256)
-}
-
 func (t *Thumbnailer) thumbPath(mediaID int, size string) string {
-	name := fmt.Sprintf("%d_%s.jpg", mediaID, size)
-	return filepath.Join(t.cfg.MediaRoot, privateDir, "thumbs", shard(mediaID), name)
+	return layout.ThumbPath(t.cfg.MediaRoot, mediaID, size)
 }
 
 func (t *Thumbnailer) sourcePath(item api.PendingMedia) string {
