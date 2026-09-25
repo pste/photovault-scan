@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Il caso che il 2026-08-07 ha lasciato 586 filmati senza anteprima: ffmpeg
@@ -32,6 +33,34 @@ func TestDecodeVideoSenzaFotogrammaMaSenzaErrore(t *testing.T) {
 	// "image: unknown format", che manda a cercare nel posto sbagliato.
 	if !strings.Contains(err.Error(), "ffmpeg") {
 		t.Errorf("l'errore deve nominare ffmpeg, invece: %v", err)
+	}
+}
+
+// Un ffmpeg che non termina non deve tenere fermo il pod: prima del tempo
+// massimo il processo andava avanti per sempre, e con concurrencyPolicy: Forbid
+// nessuno scan partiva piu'. Qui si ferma e il file finisce in errore.
+func TestDecodeVideoFFmpegAppeso(t *testing.T) {
+	fakeFFmpeg(t, "exec sleep 30")
+	old := toolTimeout
+	toolTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { toolTimeout = old })
+
+	path := filepath.Join(t.TempDir(), "appeso.mp4")
+	if err := os.WriteFile(path, []byte("finto"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	_, err := (&Thumbnailer{}).decodeVideo(path)
+	if err == nil {
+		t.Fatal("un ffmpeg interrotto deve dare errore")
+	}
+	if !strings.Contains(err.Error(), "interrotto") {
+		t.Errorf("l'errore deve dire che il tempo e' scaduto, invece: %v", err)
+	}
+	// Due tentativi (seek e primo fotogramma), ciascuno col suo tempo massimo.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("interruzione troppo lenta: %s", elapsed)
 	}
 }
 

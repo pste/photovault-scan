@@ -3,7 +3,6 @@ package thumbs
 import (
 	"encoding/json"
 	"log/slog"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -82,14 +81,13 @@ type probeOutput struct {
 // prova che la traccia video non ci sia, e sulla base di un dubbio non si
 // sposta un file fuori dalla libreria.
 func videoMeta(meta *api.MediaMeta, path string, log *slog.Logger) bool {
-	cmd := exec.Command("ffprobe",
+	out, _, err := runTool("ffprobe",
 		"-v", "quiet",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
 		path,
 	)
-	out, err := cmd.Output()
 	if err != nil {
 		log.Warn("ffprobe fallito", "path", path, "err", err)
 		return true

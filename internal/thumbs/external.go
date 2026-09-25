@@ -1,12 +1,49 @@
 package thumbs
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"image"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
+
+// toolTimeout e' il tempo massimo concesso a ffmpeg, ffprobe e heif-convert su
+// un singolo file. Un fotogramma o una conversione HEIC richiedono secondi; il
+// margine e' per i file grossi letti dalla share. Una variabile e non una
+// costante solo perche' i test la accorciano.
+var toolTimeout = 2 * time.Minute
+
+// runTool esegue uno strumento esterno con un tempo massimo.
+//
+// Senza, un file corrotto o una lettura appesa sulla share bloccano il
+// processo per sempre: il pod smette di battere, il reaper dopo mezz'ora da' il
+// job per perso, ma il pod resta vivo -- e con concurrencyPolicy: Forbid
+// nessuno scan parte piu', in silenzio. Scaduto il tempo il processo viene
+// ucciso e il file finisce in errore come qualsiasi altro.
+//
+// WaitDelay chiude le pipe anche se un processo figlio le tiene aperte: senza,
+// l'attesa dell'output potrebbe bloccarsi dopo la kill.
+func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+	defer cancel()
+
+	var outBuf, errBuf bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	cmd.WaitDelay = 5 * time.Second
+
+	err = cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		err = fmt.Errorf("%s interrotto dopo %s", name, toolTimeout)
+	}
+	return outBuf.Bytes(), errBuf.Bytes(), err
+}
 
 // decodeVideo estrae un fotogramma con ffmpeg.
 //
@@ -22,7 +59,7 @@ func (t *Thumbnailer) decodeVideo(path string) (image.Image, error) {
 	tmp.Close()
 	defer os.Remove(tmpPath)
 
-	cmd := exec.Command("ffmpeg",
+	_, out, err := runTool("ffmpeg",
 		"-nostdin",
 		"-loglevel", "error",
 		"-ss", "3",
@@ -31,7 +68,6 @@ func (t *Thumbnailer) decodeVideo(path string) (image.Image, error) {
 		"-q:v", "3",
 		"-y", tmpPath,
 	)
-	out, err := cmd.CombinedOutput()
 
 	// Sotto i 3 secondi il seek finisce oltre la fine del video e non esce
 	// nessun fotogramma. Non basta guardare il codice di uscita: in questo caso
@@ -61,7 +97,7 @@ func hasContent(path string) bool {
 }
 
 func (t *Thumbnailer) videoFirstFrame(path, outPath string) error {
-	cmd := exec.Command("ffmpeg",
+	_, out, err := runTool("ffmpeg",
 		"-nostdin",
 		"-loglevel", "error",
 		"-i", path,
@@ -69,7 +105,10 @@ func (t *Thumbnailer) videoFirstFrame(path, outPath string) error {
 		"-q:v", "3",
 		"-y", outPath,
 	)
-	return cmd.Run()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, string(out))
+	}
+	return nil
 }
 
 // decodeHeif passa da heif-convert (pacchetto libheif-tools) invece che da
@@ -83,8 +122,7 @@ func (t *Thumbnailer) decodeHeif(path string) (image.Image, error) {
 	defer os.RemoveAll(dir)
 
 	outPath := filepath.Join(dir, "out.jpg")
-	cmd := exec.Command("heif-convert", "-q", "90", path, outPath)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if _, out, err := runTool("heif-convert", "-q", "90", path, outPath); err != nil {
 		return nil, fmt.Errorf("heif-convert: %v: %s", err, string(out))
 	}
 
