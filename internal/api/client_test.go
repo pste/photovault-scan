@@ -70,7 +70,7 @@ func TestReconcileLeggeIlCorpoDel409(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome, err := newTestClient(server.URL).Reconcile(1, time.Now())
+	outcome, err := newTestClient(server.URL).Reconcile(1, 7, time.Now())
 	if err != nil {
 		t.Fatalf("il rifiuto del reconcile non e' un errore di trasporto: %v", err)
 	}

@@ -53,21 +53,26 @@ func (s *Scanner) Run(jobID int) (string, error) {
 
 	summary := make([]string, 0, len(roots))
 	for _, root := range roots {
-		count, err := s.scanRoot(root, startedAt, jobID)
+		count, unreadable, err := s.scanRoot(root, startedAt, jobID)
 		if err != nil {
 			return "", err
 		}
-		summary = append(summary, fmt.Sprintf("%s: %d file", root.Name, count))
+		line := fmt.Sprintf("%s: %d file", root.Name, count)
+		if unreadable > 0 {
+			line += fmt.Sprintf(" (voci non leggibili: %d, nessun file marcato mancante)", unreadable)
+		}
+		summary = append(summary, line)
 	}
 	return strings.Join(summary, "; "), nil
 }
 
-func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, error) {
+// scanRoot restituisce i media inviati e le voci che non si sono potute leggere.
+func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, int, error) {
 	base := filepath.Join(s.cfg.MediaRoot, root.RelPath)
 	s.log.Info("scansione avviata", "root", root.Name, "path", base)
 
 	if _, err := os.Stat(base); err != nil {
-		return 0, fmt.Errorf("root %q non raggiungibile: %w", root.Name, err)
+		return 0, 0, fmt.Errorf("root %q non raggiungibile: %w", root.Name, err)
 	}
 
 	// Gli id delle cartelle si memorizzano man mano: una cartella con 500 foto
@@ -83,6 +88,7 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 	// senza rendere il log illeggibile.
 	const progressEvery = 5000
 	logged := 0
+	unreadable := 0
 
 	flush := func() error {
 		if len(batch) == 0 {
@@ -126,8 +132,11 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 	walkErr := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// Un permesso negato su una sottocartella non deve far fallire
-			// l'intera scansione: si annota e si prosegue.
+			// l'intera scansione: si annota e si prosegue. Ma si conta, perche'
+			// i file la' sotto non vengono rivisti, e il reconcile li darebbe
+			// per cancellati.
 			s.log.Warn("voce non leggibile", "path", path, "err", err)
+			unreadable++
 			return nil
 		}
 
@@ -144,6 +153,7 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 		info, err := d.Info()
 		if err != nil {
 			s.log.Warn("info non leggibili", "path", path, "err", err)
+			unreadable++
 			return nil
 		}
 
@@ -207,30 +217,40 @@ func (s *Scanner) scanRoot(root api.Root, startedAt time.Time, jobID int) (int, 
 	})
 
 	if walkErr != nil {
-		return total, walkErr
+		return total, unreadable, walkErr
 	}
 	if err := flush(); err != nil {
-		return total, err
+		return total, unreadable, err
 	}
 	if err := flushOthers(); err != nil {
-		return total, err
+		return total, unreadable, err
 	}
 
-	outcome, err := s.client.Reconcile(root.RootID, startedAt)
+	// Una cartella illeggibile -- un errore di I/O passeggero sulla share, un
+	// permesso cambiato -- nasconde i file che contiene, e il reconcile li
+	// marcherebbe mancanti tutti: il guard del 90% guarda l'intera root, e una
+	// cartella da mille foto su trecentomila non lo fa scattare. In dubbio
+	// non si marca niente: i file davvero cancellati si vedranno al giro dopo.
+	if unreadable > 0 {
+		s.log.Warn("reconcile saltato: voci non leggibili", "root", root.Name, "voci", unreadable)
+		return total, unreadable, nil
+	}
+
+	outcome, err := s.client.Reconcile(root.RootID, jobID, startedAt)
 	if err != nil {
-		return total, fmt.Errorf("reconcile: %w", err)
+		return total, unreadable, fmt.Errorf("reconcile: %w", err)
 	}
 	// Il rifiuto e' deliberato: una share mezza montata e' indistinguibile da
 	// "l'utente ha cancellato tutto", quindi l'API non tocca niente e il job
 	// deve finire in errore per rendere il fatto visibile.
 	if outcome.Refused {
-		return total, fmt.Errorf("%s", outcome.Reason)
+		return total, unreadable, fmt.Errorf("%s", outcome.Reason)
 	}
 
 	s.log.Info("scansione conclusa",
 		"root", root.Name, "file", total, "non_gestiti", totalOthers,
 		"visti", outcome.Seen, "mancanti", outcome.Missing)
-	return total, nil
+	return total, unreadable, nil
 }
 
 // toFolderPath normalizza il percorso di una cartella come lo vuole l'API:

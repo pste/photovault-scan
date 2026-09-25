@@ -251,10 +251,14 @@ func (c *Client) SendMedia(items []MediaItem) error {
 	return c.do("POST", "/api/internal/scan/media/batch", map[string]any{"items": items}, nil)
 }
 
-func (c *Client) Reconcile(rootID int, startedAt time.Time) (*ReconcileOutcome, error) {
+// Reconcile manda sia job_id sia started_at: l'API usa l'avvio del job, che e'
+// sull'orologio del database come last_seen; started_at serve alle API che non
+// conoscono ancora job_id.
+func (c *Client) Reconcile(rootID, jobID int, startedAt time.Time) (*ReconcileOutcome, error) {
 	var out ReconcileOutcome
 	body := map[string]any{
 		"root_id":    rootID,
+		"job_id":     jobID,
 		"started_at": startedAt.UTC().Format(time.RFC3339),
 	}
 	err := c.do("POST", "/api/internal/scan/reconcile", body, &out)
