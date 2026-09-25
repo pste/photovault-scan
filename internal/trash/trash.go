@@ -7,12 +7,14 @@
 package trash
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/pste/photovault-scan/internal/api"
 	"github.com/pste/photovault-scan/internal/config"
@@ -143,11 +145,22 @@ func (t *Trash) moveOne(item api.TrashItem) error {
 		}
 		// La rename fallisce se sorgente e destinazione stanno su filesystem
 		// diversi. Sulla stessa share non capita, ma in sviluppo si', quindi
-		// si ripiega su copia piu' cancellazione.
+		// si ripiega su copia piu' cancellazione -- solo in quel caso: per
+		// qualsiasi altro errore copiare non risolverebbe niente.
+		if !errors.Is(err, syscall.EXDEV) {
+			return fmt.Errorf("rename: %w", err)
+		}
+		// Ogni fallimento a meta' toglie la copia. Una copia parziale
+		// resterebbe nel cestino senza che nessuna riga la conosca, e una
+		// copia completa col file di partenza ancora al suo posto finirebbe
+		// in una riga 'error', che il purge non guarda: spazio occupato per
+		// sempre.
 		if copyErr := copyFile(src, dst); copyErr != nil {
+			os.Remove(dst)
 			return fmt.Errorf("rename: %v; copia: %w", err, copyErr)
 		}
 		if rmErr := os.Remove(src); rmErr != nil {
+			os.Remove(dst)
 			return fmt.Errorf("copia riuscita ma rimozione fallita: %w", rmErr)
 		}
 	}
@@ -238,10 +251,16 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
+	// Close si controlla: su una share di rete e' spesso li' che arriva
+	// l'errore di una scrittura non andata a buon fine.
 	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
 		return err
 	}
-	return out.Sync()
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

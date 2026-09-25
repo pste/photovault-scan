@@ -1,6 +1,8 @@
 package trash
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pste/photovault-scan/internal/api"
@@ -39,5 +41,35 @@ func TestPaths(t *testing.T) {
 		if _, _, err := tr.paths(item); err == nil {
 			t.Errorf("%+v: accettato", item)
 		}
+	}
+}
+
+// Una rename rifiutata per permessi non si "aggira" copiando: prima la copia
+// riusciva, la rimozione dell'originale no, e nel cestino restava una copia
+// che nessuna riga conosceva -- il purge guarda solo le righe 'done'.
+func TestMoveSenzaPermessiNonLasciaCopie(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("da root i permessi non fermano la rename")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "2019")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.jpg"), []byte("foto"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	tr := &Trash{cfg: config.Config{MediaRoot: root}}
+	item := api.TrashItem{OriginalPath: "2019/a.jpg", TrashPath: ".photovault/trash/20260925/1_a.jpg"}
+	if err := tr.moveOne(item); err == nil {
+		t.Fatal("la rename senza permessi deve fallire")
+	}
+	if _, err := os.Stat(filepath.Join(root, item.TrashPath)); !os.IsNotExist(err) {
+		t.Fatalf("nel cestino e' rimasta una copia: %v", err)
 	}
 }
