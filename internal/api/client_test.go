@@ -79,6 +79,20 @@ func TestReconcileLeggeIlCorpoDel409(t *testing.T) {
 	}
 }
 
+// Fuori dal reconcile un 409 e' un errore come gli altri: prima passava per un
+// successo su qualsiasi chiamata, e CompleteTrash lo contava come "spostato".
+func TestUn409FuoriDalReconcileEUnErrore(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":"conflitto"}`)
+	}))
+	defer server.Close()
+
+	if err := newTestClient(server.URL).CompleteTrash(3, "done", "spostato"); err == nil {
+		t.Fatal("un 409 su CompleteTrash deve dare errore")
+	}
+}
+
 func newTestClient(url string) *Client {
 	return New(url, "token-di-prova", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }

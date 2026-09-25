@@ -153,9 +153,14 @@ func (c *Client) doStatus(method, path string, body any, out any) (int, error) {
 		return res.StatusCode, err
 	}
 
-	// Il 409 del reconcile non e' un errore di trasporto: e' un rifiuto
-	// deliberato, e il chiamante deve poterne leggere il corpo.
-	if res.StatusCode >= 400 && res.StatusCode != http.StatusConflict {
+	// Ogni 4xx e 5xx e' un errore, 409 compreso: prima il 409 era escluso per
+	// tutte le chiamate, perche' serviva al reconcile, e un 409 su SendMedia o
+	// su CompleteTrash passava per un successo. Il corpo si decodifica
+	// comunque: e' li' che il rifiuto del reconcile spiega il motivo.
+	if res.StatusCode >= 400 {
+		if out != nil && len(payload) > 0 {
+			_ = json.Unmarshal(payload, out)
+		}
 		return res.StatusCode, fmt.Errorf("%s %s: %s: %s", method, path, res.Status, string(payload))
 	}
 	if out != nil && len(payload) > 0 {
@@ -261,7 +266,12 @@ func (c *Client) Reconcile(rootID, jobID int, startedAt time.Time) (*ReconcileOu
 		"job_id":     jobID,
 		"started_at": startedAt.UTC().Format(time.RFC3339),
 	}
-	err := c.do("POST", "/api/internal/scan/reconcile", body, &out)
+	// Il 409 del reconcile non e' un errore di trasporto: e' il rifiuto
+	// deliberato del guard, e il chiamante ne legge il motivo nel corpo.
+	status, err := c.doStatus("POST", "/api/internal/scan/reconcile", body, &out)
+	if status == http.StatusConflict {
+		return &out, nil
+	}
 	return &out, err
 }
 
