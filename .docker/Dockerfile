@@ -1,5 +1,5 @@
 ## STAGE 1 ##################################
-FROM golang:1.25-alpine AS build
+FROM golang:1.25.14-alpine AS build
 
 # CGO disattivato: binario statico, nessuna libreria di sistema da trascinare
 # nell'immagine finale.
@@ -14,7 +14,7 @@ COPY internal/ internal/
 RUN go build -trimpath -ldflags="-s -w" -o /out/scan ./cmd/scan
 
 ## STAGE 2 ##################################
-FROM alpine:3.21
+FROM alpine:3.21.8
 
 # ffmpeg: fotogrammi dei video e ffprobe per i metadati.
 # libheif-tools: heif-convert per le foto HEIC dell'iPhone.

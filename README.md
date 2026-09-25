@@ -182,6 +182,6 @@ rename sulla stessa share è atomica e istantanea, e rende ogni errore recuperab
 ## Build
 
 ```dockerfile
-FROM golang:1.25-alpine AS build   # CGO_ENABLED=0, build statica
-FROM alpine:3.21                   # + ffmpeg, libheif-tools, tzdata
+FROM golang:1.25.14-alpine AS build   # CGO_ENABLED=0, build statica
+FROM alpine:3.21.8                 # + ffmpeg, libheif-tools, tzdata
 ```
