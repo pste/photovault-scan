@@ -14,7 +14,7 @@ COPY internal/ internal/
 RUN go build -trimpath -ldflags="-s -w" -o /out/scan ./cmd/scan
 
 ## STAGE 2 ##################################
-FROM alpine:3.21.8
+FROM alpine:3.21.9
 
 # ffmpeg: fotogrammi dei video e ffprobe per i metadati.
 # libheif-tools: heif-convert per le foto HEIC dell'iPhone.
